@@ -1,0 +1,8 @@
+node_modules/
+slides/build/
+site/
+.DS_Store
+*.log
+.agent-out/
+.env
+.env.*

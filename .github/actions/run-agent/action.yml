@@ -1,0 +1,141 @@
+name: Run agent
+description: >
+  1サイクル分の1ロール（dev / feedback / slides）を、設定されたエージェント
+  （claude または codex）で実行し、結果をコミットする。
+  両エージェントには完全に同一のプロンプト文字列を渡す。
+
+inputs:
+  role:
+    description: "dev | feedback | slides"
+    required: true
+  agent:
+    description: "claude | codex"
+    required: true
+  cycle:
+    description: "現在のサイクル番号"
+    required: true
+  max-cycles:
+    description: "総サイクル数"
+    required: true
+  model:
+    description: "このロール・このエージェント用に解決済みのモデルID"
+    required: true
+  codex-effort:
+    description: "Codex の reasoning effort"
+    required: false
+    default: "high"
+  max-turns:
+    description: "Claude Code の最大ターン数"
+    required: false
+    default: "40"
+  claude-code-oauth-token:
+    description: "Claude Pro/Max のサブスク枠で実行する場合のトークン（`claude setup-token` で発行）"
+    required: false
+    default: ""
+  anthropic-api-key:
+    description: "OAuth トークンが無い場合のフォールバック（従量課金）"
+    required: false
+    default: ""
+  openai-api-key:
+    required: false
+    default: ""
+  github-token:
+    description: "コミット/プッシュ用トークン（エージェント実行中は渡さない）"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # ------------------------------------------------------------------
+    # 1. プロンプトを組み立てる（claude / codex に同一文字列を渡すため共通化）
+    # ------------------------------------------------------------------
+    - name: Build prompt
+      id: prompt
+      shell: bash
+      env:
+        ROLE: ${{ inputs.role }}
+        CYCLE: ${{ inputs.cycle }}
+        MAX_CYCLES: ${{ inputs.max-cycles }}
+      run: |
+        set -euo pipefail
+        SRC="prompts/${ROLE}.md"
+        if [ ! -f "$SRC" ]; then
+          echo "::error::prompt file not found: $SRC"
+          exit 1
+        fi
+        {
+          echo "text<<AGENT_PROMPT_EOF"
+          sed -e "s/{{CYCLE}}/${CYCLE}/g" -e "s/{{MAX_CYCLES}}/${MAX_CYCLES}/g" "$SRC"
+          echo "AGENT_PROMPT_EOF"
+        } >> "$GITHUB_OUTPUT"
+
+    # ------------------------------------------------------------------
+    # 2. エージェント実行（どちらか一方だけが走る）
+    # ------------------------------------------------------------------
+    - name: Run Claude Code
+      if: inputs.agent == 'claude'
+      uses: anthropics/claude-code-action@v1
+      with:
+        claude_code_oauth_token: ${{ inputs.claude-code-oauth-token }}
+        anthropic_api_key: ${{ inputs.anthropic-api-key }}
+        prompt: ${{ steps.prompt.outputs.text }}
+        claude_args: |
+          --model ${{ inputs.model }}
+          --max-turns ${{ inputs.max-turns }}
+          --allowedTools Read,Write,Edit,Glob,Grep,Bash
+
+    - name: Run Codex
+      if: inputs.agent == 'codex'
+      uses: openai/codex-action@v1
+      with:
+        openai-api-key: ${{ inputs.openai-api-key }}
+        prompt: ${{ steps.prompt.outputs.text }}
+        permission-profile: ":workspace"
+        safety-strategy: drop-sudo
+        model: ${{ inputs.model }}
+        effort: ${{ inputs.codex-effort }}
+
+    # ------------------------------------------------------------------
+    # 3. 保護パスへの変更を破棄（自己改変によるループ暴走の防止）
+    # ------------------------------------------------------------------
+    - name: Revert protected paths
+      shell: bash
+      run: |
+        set -euo pipefail
+        PROTECTED=(.github prompts AGENTS.md docs/evaluation.md docs/product-brief.md experiment.json metrics)
+        DIRTY=0
+        for p in "${PROTECTED[@]}"; do
+          if ! git diff --quiet -- "$p" 2>/dev/null || \
+             [ -n "$(git ls-files --others --exclude-standard -- "$p")" ]; then
+            DIRTY=1
+            echo "::warning::protected path modified by agent, reverting: $p"
+          fi
+        done
+        if [ "$DIRTY" -eq 1 ]; then
+          git checkout -- "${PROTECTED[@]}" 2>/dev/null || true
+          git clean -fd -- "${PROTECTED[@]}" 2>/dev/null || true
+          echo "PROTECTED_PATH_VIOLATION=1" >> "$GITHUB_ENV"
+        fi
+
+    # ------------------------------------------------------------------
+    # 4. コミット & プッシュ
+    # ------------------------------------------------------------------
+    - name: Commit and push
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        ROLE: ${{ inputs.role }}
+        AGENT: ${{ inputs.agent }}
+        CYCLE: ${{ inputs.cycle }}
+      run: |
+        set -euo pipefail
+        git config user.name "loop-bot"
+        git config user.email "loop-bot@users.noreply.github.com"
+        git add -A
+        if git diff --cached --quiet; then
+          echo "::notice::no changes produced by ${AGENT} (${ROLE}, cycle ${CYCLE})"
+          exit 0
+        fi
+        git commit -m "cycle ${CYCLE}: ${ROLE} by ${AGENT}"
+        git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+          "HEAD:${GITHUB_REF_NAME}"

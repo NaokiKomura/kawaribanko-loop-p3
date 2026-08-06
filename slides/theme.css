@@ -1,0 +1,93 @@
+/* @theme kawaribanko */
+/* ハッカソンのピッチ用テーマ。スライドエージェントが改善してよい。 */
+
+@import 'default';
+
+section {
+  --ink: #1a1a1a;
+  --paper: #faf7f2;
+  --accent: #e8654a;
+  --sub: #6b6560;
+  --rule: #e0d9d0;
+
+  background: var(--paper);
+  color: var(--ink);
+  font-family: "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
+  font-size: 26px;
+  padding: 60px 70px;
+  line-height: 1.6;
+}
+
+section h1 {
+  font-size: 1.9em;
+  color: var(--ink);
+  border: none;
+  margin-bottom: 0.3em;
+  letter-spacing: -0.01em;
+}
+
+section h2 {
+  font-size: 1.35em;
+  color: var(--ink);
+  border-bottom: 3px solid var(--accent);
+  display: inline-block;
+  padding-bottom: 0.15em;
+  margin-bottom: 0.7em;
+}
+
+section h3 {
+  font-size: 1.05em;
+  color: var(--sub);
+}
+
+section strong { color: var(--accent); }
+
+section code {
+  background: #efe9e1;
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+  font-size: 0.85em;
+}
+
+section pre {
+  background: #2b2724;
+  color: #f2ede6;
+  border-radius: 8px;
+  font-size: 0.7em;
+}
+
+section table {
+  font-size: 0.8em;
+  border-collapse: collapse;
+}
+section th {
+  background: #efe9e1;
+  border-bottom: 2px solid var(--rule);
+}
+section td { border-bottom: 1px solid var(--rule); }
+
+section blockquote {
+  border-left: 4px solid var(--accent);
+  color: var(--sub);
+  padding-left: 0.8em;
+  font-style: normal;
+}
+
+/* 表紙 */
+section.lead {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  text-align: center;
+}
+section.lead h1 { font-size: 2.8em; }
+section.lead p  { color: var(--sub); font-size: 1.1em; }
+
+/* 大きな数字を見せるスライド */
+section.stat strong {
+  font-size: 2.4em;
+  line-height: 1.1;
+  display: inline-block;
+}
+
+section footer, section::after { color: var(--sub); font-size: 0.6em; }

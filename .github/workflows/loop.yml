@@ -1,0 +1,229 @@
+name: loop
+
+on:
+  schedule:
+    # ↓ この行は scripts/setup-repos.sh がパターンごとに書き換える（負荷分散のため時刻をずらす）
+    #   P1 = 0 15 * * * (00:00 JST) / P2 = 0 1 * * * (10:00 JST) / P3 = 0 11 * * * (20:00 JST)
+    # 注: GitHub のスケジュールは負荷により数分〜数十分遅延する。実測は metrics/ に記録される。
+    - cron: "0 11 * * *" # LOOP_SCHEDULE
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "max_cycles を超えていても強制実行する"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: loop
+  cancel-in-progress: false
+
+jobs:
+  # ====================================================================
+  # 実験設定を読み、今回のサイクル番号を決める
+  # ====================================================================
+  config:
+    runs-on: ubuntu-latest
+    outputs:
+      halt: ${{ steps.cfg.outputs.halt }}
+      cycle: ${{ steps.cfg.outputs.cycle }}
+      max_cycles: ${{ steps.cfg.outputs.max_cycles }}
+      dev_agent: ${{ steps.cfg.outputs.dev_agent }}
+      feedback_agent: ${{ steps.cfg.outputs.feedback_agent }}
+      slides_agent: ${{ steps.cfg.outputs.slides_agent }}
+      dev_model: ${{ steps.cfg.outputs.dev_model }}
+      feedback_model: ${{ steps.cfg.outputs.feedback_model }}
+      slides_model: ${{ steps.cfg.outputs.slides_model }}
+      codex_effort: ${{ steps.cfg.outputs.codex_effort }}
+      max_turns: ${{ steps.cfg.outputs.max_turns }}
+      base_sha: ${{ steps.cfg.outputs.base_sha }}
+      started_at: ${{ steps.cfg.outputs.started_at }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - id: cfg
+        run: |
+          set -euo pipefail
+          E=experiment.json
+
+          # ロールごとのモデルは、そのロールに割り当てられたエージェント（claude/codex）に
+          # 応じて experiment.json の models.<role>.<agent> から解決する。
+          resolve_model() {
+            local role="$1" agent
+            agent=$(jq -r ".agents.${role}" "$E")
+            jq -r ".models.${role}.${agent}" "$E"
+          }
+
+          {
+            echo "dev_agent=$(jq -r '.agents.dev' $E)"
+            echo "feedback_agent=$(jq -r '.agents.feedback' $E)"
+            echo "slides_agent=$(jq -r '.agents.slides' $E)"
+            echo "dev_model=$(resolve_model dev)"
+            echo "feedback_model=$(resolve_model feedback)"
+            echo "slides_model=$(resolve_model slides)"
+            echo "codex_effort=$(jq -r '.models.codex_effort // "high"' $E)"
+            echo "max_turns=$(jq -r '.max_turns // 40' $E)"
+            echo "base_sha=$(git rev-parse HEAD)"
+            echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } >> "$GITHUB_OUTPUT"
+
+          MAX=$(jq -r '.max_cycles' $E)
+          DONE=$( { find metrics -maxdepth 1 -name 'cycle-*.json' 2>/dev/null || true; } | wc -l | tr -d ' ')
+          CYCLE=$((DONE + 1))
+
+          echo "max_cycles=${MAX}" >> "$GITHUB_OUTPUT"
+          echo "cycle=${CYCLE}"    >> "$GITHUB_OUTPUT"
+
+          if [ "$CYCLE" -gt "$MAX" ] && [ "${{ inputs.force }}" != "true" ]; then
+            echo "halt=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::実験終了済み（${MAX} サイクル完了）。停止します。"
+          else
+            echo "halt=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::サイクル ${CYCLE}/${MAX} を開始します。"
+          fi
+
+  # ====================================================================
+  # 1. 開発
+  # ====================================================================
+  dev:
+    needs: config
+    if: needs.config.outputs.halt == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: ./.github/actions/run-agent
+        with:
+          role: dev
+          agent: ${{ needs.config.outputs.dev_agent }}
+          cycle: ${{ needs.config.outputs.cycle }}
+          max-cycles: ${{ needs.config.outputs.max_cycles }}
+          model: ${{ needs.config.outputs.dev_model }}
+          codex-effort: ${{ needs.config.outputs.codex_effort }}
+          max-turns: ${{ needs.config.outputs.max_turns }}
+          claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+  # ====================================================================
+  # 2. フィードバック
+  # ====================================================================
+  feedback:
+    needs: [config, dev]
+    if: needs.config.outputs.halt == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: ./.github/actions/run-agent
+        with:
+          role: feedback
+          agent: ${{ needs.config.outputs.feedback_agent }}
+          cycle: ${{ needs.config.outputs.cycle }}
+          max-cycles: ${{ needs.config.outputs.max_cycles }}
+          model: ${{ needs.config.outputs.feedback_model }}
+          codex-effort: ${{ needs.config.outputs.codex_effort }}
+          max-turns: ${{ needs.config.outputs.max_turns }}
+          claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+  # ====================================================================
+  # 3. スライド生成
+  # ====================================================================
+  slides:
+    needs: [config, feedback]
+    if: needs.config.outputs.halt == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: ./.github/actions/run-agent
+        with:
+          role: slides
+          agent: ${{ needs.config.outputs.slides_agent }}
+          cycle: ${{ needs.config.outputs.cycle }}
+          max-cycles: ${{ needs.config.outputs.max_cycles }}
+          model: ${{ needs.config.outputs.slides_model }}
+          codex-effort: ${{ needs.config.outputs.codex_effort }}
+          max-turns: ${{ needs.config.outputs.max_turns }}
+          claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+  # ====================================================================
+  # 4. 記録（メトリクス確定 + スライドのビルド検証）
+  #    このジョブが metrics/cycle-N.json を書くことでサイクルが1つ進む
+  # ====================================================================
+  wrap:
+    needs: [config, dev, feedback, slides]
+    if: always() && needs.config.outputs.halt == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Build slides (検証 + 成果物)
+        id: build
+        continue-on-error: true
+        run: bash scripts/build_slides.sh
+
+      - name: Collect metrics
+        env:
+          CYCLE: ${{ needs.config.outputs.cycle }}
+          BASE_SHA: ${{ needs.config.outputs.base_sha }}
+          STARTED_AT: ${{ needs.config.outputs.started_at }}
+          DEV_AGENT: ${{ needs.config.outputs.dev_agent }}
+          FEEDBACK_AGENT: ${{ needs.config.outputs.feedback_agent }}
+          SLIDES_AGENT: ${{ needs.config.outputs.slides_agent }}
+          DEV_RESULT: ${{ needs.dev.result }}
+          FEEDBACK_RESULT: ${{ needs.feedback.result }}
+          SLIDES_RESULT: ${{ needs.slides.result }}
+          SLIDES_BUILD: ${{ steps.build.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash scripts/collect_metrics.sh
+
+      - name: Commit metrics
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CYCLE: ${{ needs.config.outputs.cycle }}
+        run: |
+          set -euo pipefail
+          git config user.name "loop-bot"
+          git config user.email "loop-bot@users.noreply.github.com"
+          git add -A metrics slides
+          if git diff --cached --quiet; then
+            echo "::notice::no metrics changes"
+            exit 0
+          fi
+          git commit -m "cycle ${CYCLE}: metrics"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            "HEAD:${GITHUB_REF_NAME}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: slides-cycle-${{ needs.config.outputs.cycle }}
+          path: slides/build/
+          if-no-files-found: warn

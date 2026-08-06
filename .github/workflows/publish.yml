@@ -1,0 +1,74 @@
+name: publish
+
+# スライドを GitHub Pages に公開する。
+#
+# 【承認通知の仕組み】
+# gate ジョブの `environment: publish` に required reviewers を設定しておくと、
+# このワークフローはここで一時停止し、GitHub からあなたへ承認依頼が飛ぶ
+# （メール + GitHub モバイルアプリのプッシュ通知 + Web 通知）。
+# あなたが Approve を押すまで deploy は実行されない。
+#
+# workflow_run により loop の完了ごとに承認依頼が来る。
+# 毎日聞かれるのが煩わしければ workflow_run のブロックを削除し、
+# workflow_dispatch（手動実行）だけにする。
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["loop"]
+    types: [completed]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: publish
+  cancel-in-progress: true
+
+jobs:
+  # 承認待ちで止まるだけのジョブ
+  gate:
+    runs-on: ubuntu-latest
+    environment: publish
+    steps:
+      - run: echo "承認されました。公開に進みます。"
+
+  deploy:
+    needs: gate
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Build slides
+        run: bash scripts/build_slides.sh
+
+      - name: Assemble site (slides + app)
+        run: |
+          set -euo pipefail
+          mkdir -p site
+          cp -r slides/build/* site/
+          mkdir -p site/app
+          cp -r app/* site/app/
+          # ルートはスライドを表示する
+          if [ -f site/report.html ] && [ ! -f site/index.html ]; then
+            cp site/report.html site/index.html
+          fi
+          ls -la site
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4
