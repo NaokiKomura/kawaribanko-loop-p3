@@ -295,8 +295,25 @@ jobs:
 
           # 作業ブランチは main の先端から切っており、loop は concurrency で
           # 直列化されているため、通常は fast-forward で入る。
-          if ! git push "$REMOTE" "HEAD:main"; then
-            echo "::error::main への fast-forward に失敗しました。ブランチ ${BRANCH} を手動で確認してください。"
+          # ただしサイクル実行中に人間が main へ push すると弾かれ、
+          # 完走したサイクルが丸ごと失われる。その場合は main に rebase して
+          # 積み直す（保護パスのおかげでエージェント成果と衝突しない）。
+          PUSHED=false
+          for i in 1 2 3; do
+            if git push "$REMOTE" "HEAD:main"; then
+              PUSHED=true
+              break
+            fi
+            echo "::warning::main が進んでいたため rebase して再試行します（${i}回目）"
+            git fetch "$REMOTE" main
+            if ! git rebase FETCH_HEAD; then
+              git rebase --abort || true
+              echo "::error::main への rebase が競合しました。ブランチ ${BRANCH} を手動で確認してください。"
+              exit 1
+            fi
+          done
+          if [ "$PUSHED" != true ]; then
+            echo "::error::main への取り込みに3回失敗しました。ブランチ ${BRANCH} を手動で確認してください。"
             exit 1
           fi
           echo "::notice::サイクル ${CYCLE} を main に取り込みました。"
