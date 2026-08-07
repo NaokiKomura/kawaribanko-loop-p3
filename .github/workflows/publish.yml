@@ -49,6 +49,10 @@ jobs:
           # であり、そのサイクルの成果が main に取り込まれる前を指す。
           # 公開するのは完走済みサイクルだけを含む main の最新。
           ref: main
+          # サイクル別スナップショットは cycle-N タグから組み立てるため、
+          # 履歴とタグを全部持ってくる（浅いクローンではタグが引けない）。
+          fetch-depth: 0
+          fetch-tags: true
 
       - uses: actions/setup-node@v4
         with:
@@ -57,18 +61,21 @@ jobs:
       - name: Build slides
         run: bash scripts/build_slides.sh
 
-      - name: Assemble site (slides + app)
+      - name: Assemble site (slides + app + snapshots)
         run: |
           set -euo pipefail
           mkdir -p site
           cp -r slides/build/* site/
+          # /app/ は常に最新サイクルのアプリ
           mkdir -p site/app
           cp -r app/* site/app/
+          # /cycles/ にサイクル別スナップショットと一覧を置く
+          bash scripts/snapshot.sh site/cycles
           # ルートはスライドを表示する
           if [ -f site/report.html ] && [ ! -f site/index.html ]; then
             cp site/report.html site/index.html
           fi
-          ls -la site
+          ls -la site site/cycles
 
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

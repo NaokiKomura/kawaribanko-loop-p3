@@ -318,6 +318,13 @@ jobs:
           fi
           echo "::notice::サイクル ${CYCLE} を main に取り込みました。"
 
+          # このサイクルの成果に cycle-N タグを打つ。以後この時点のアプリを
+          # `git checkout cycle-N` で正確に取り出せる（publish がサイクル別
+          # スナップショットを組み立てるのもこのタグを起点にする）。
+          git tag -f "cycle-${CYCLE}"
+          git push "$REMOTE" -f "refs/tags/cycle-${CYCLE}" || \
+            echo "::warning::タグ cycle-${CYCLE} の push に失敗しました（スナップショットに載りません）"
+
           # 完走したサイクルの作業ブランチは不要（履歴は main にある）
           git push "$REMOTE" --delete "${BRANCH}" || \
             echo "::warning::作業ブランチ ${BRANCH} の削除に失敗しました（無害）"

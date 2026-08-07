@@ -6,3 +6,4 @@ site/
 .agent-out/
 .env
 .env.*
+snapshots/

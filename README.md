@@ -181,6 +181,26 @@ gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo <owner>/<repo> \
   --body "$(claude setup-token | LC_ALL=C tr -cd '\041-\176')"
 ```
 
+## サイクルごとのスナップショット
+
+完走したサイクルには `wrap` が `cycle-N` タグを打ちます。各サイクル終了時点の
+アプリはこのタグから正確に取り出せます。
+
+公開サイトの **`/cycles/`** に全サイクルの一覧が出て、各サイクル当時のアプリを
+そのままブラウザで開けます（`/app/` は常に最新サイクル）。日を追ってアプリが
+どう育ったかを、その場で見比べられます。
+
+手元に取り出すには:
+
+```bash
+git fetch --tags
+bash scripts/snapshot.sh snapshots
+python3 -m http.server 8000 --directory snapshots
+```
+
+`snapshots/cycle-1/`, `snapshots/cycle-2/` … が生成され、`index.html` が一覧になります。
+履歴から取り出すだけなのでリポジトリは汚れません（`snapshots/` は `.gitignore` 済み）。
+
 ## 比較のしかた
 
 `metrics/cycle-*.json` に毎サイクルの実測値が入ります。
