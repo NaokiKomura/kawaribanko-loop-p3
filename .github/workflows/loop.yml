@@ -40,6 +40,7 @@ jobs:
       max_turns: ${{ steps.cfg.outputs.max_turns }}
       base_sha: ${{ steps.cfg.outputs.base_sha }}
       started_at: ${{ steps.cfg.outputs.started_at }}
+      branch: ${{ steps.branch.outputs.name }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -86,6 +87,26 @@ jobs:
             echo "::notice::サイクル ${CYCLE}/${MAX} を開始します。"
           fi
 
+      # ------------------------------------------------------------------
+      # 作業用ブランチを main の先端から切る。
+      # 3ロールと wrap はすべてこのブランチ上で作業し、main には触らない。
+      # main へ取り込むのは wrap の最後（全ロール成功時）だけ。
+      # run_id を付けて毎回新しいブランチにするため、失敗したサイクルの
+      # ブランチはそのまま残り、後から中身を調査できる。
+      # ------------------------------------------------------------------
+      - id: branch
+        if: steps.cfg.outputs.halt == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CYCLE: ${{ steps.cfg.outputs.cycle }}
+        run: |
+          set -euo pipefail
+          NAME="cycle-${CYCLE}-${GITHUB_RUN_ID}"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            "HEAD:refs/heads/${NAME}"
+          echo "name=${NAME}" >> "$GITHUB_OUTPUT"
+          echo "::notice::作業ブランチ ${NAME} を作成しました。"
+
   # ====================================================================
   # 1. 開発
   # ====================================================================
@@ -100,9 +121,9 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
           # 前のジョブが push した成果を引き継ぐため、起動時 SHA ではなく
-          # ブランチの最新を取る（既定の github.sha だと前工程の成果が見えず、
-          # push も non-fast-forward で失敗する）。
-          ref: ${{ github.ref_name }}
+          # 作業ブランチの最新を取る（既定の github.sha だと前工程の成果が
+          # 見えず、push も non-fast-forward で失敗する）。
+          ref: ${{ needs.config.outputs.branch }}
       - uses: ./.github/actions/run-agent
         with:
           role: dev
@@ -116,6 +137,7 @@ jobs:
           anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
+          branch: ${{ needs.config.outputs.branch }}
 
   # ====================================================================
   # 2. フィードバック
@@ -131,9 +153,9 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
           # 前のジョブが push した成果を引き継ぐため、起動時 SHA ではなく
-          # ブランチの最新を取る（既定の github.sha だと前工程の成果が見えず、
-          # push も non-fast-forward で失敗する）。
-          ref: ${{ github.ref_name }}
+          # 作業ブランチの最新を取る（既定の github.sha だと前工程の成果が
+          # 見えず、push も non-fast-forward で失敗する）。
+          ref: ${{ needs.config.outputs.branch }}
       - uses: ./.github/actions/run-agent
         with:
           role: feedback
@@ -147,6 +169,7 @@ jobs:
           anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
+          branch: ${{ needs.config.outputs.branch }}
 
   # ====================================================================
   # 3. スライド生成
@@ -162,9 +185,9 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
           # 前のジョブが push した成果を引き継ぐため、起動時 SHA ではなく
-          # ブランチの最新を取る（既定の github.sha だと前工程の成果が見えず、
-          # push も non-fast-forward で失敗する）。
-          ref: ${{ github.ref_name }}
+          # 作業ブランチの最新を取る（既定の github.sha だと前工程の成果が
+          # 見えず、push も non-fast-forward で失敗する）。
+          ref: ${{ needs.config.outputs.branch }}
       - uses: ./.github/actions/run-agent
         with:
           role: slides
@@ -178,6 +201,7 @@ jobs:
           anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
+          branch: ${{ needs.config.outputs.branch }}
 
   # ====================================================================
   # 4. 記録（メトリクス確定 + スライドのビルド検証）
@@ -193,9 +217,9 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
           # 前のジョブが push した成果を引き継ぐため、起動時 SHA ではなく
-          # ブランチの最新を取る（既定の github.sha だと前工程の成果が見えず、
-          # push も non-fast-forward で失敗する）。
-          ref: ${{ github.ref_name }}
+          # 作業ブランチの最新を取る（既定の github.sha だと前工程の成果が
+          # 見えず、push も non-fast-forward で失敗する）。
+          ref: ${{ needs.config.outputs.branch }}
 
       - uses: actions/setup-node@v4
         with:
@@ -225,6 +249,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CYCLE: ${{ needs.config.outputs.cycle }}
+          BRANCH: ${{ needs.config.outputs.branch }}
         run: |
           set -euo pipefail
           git config user.name "loop-bot"
@@ -238,15 +263,59 @@ jobs:
 
           REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           for i in 1 2 3; do
-            if git push "$REMOTE" "HEAD:${GITHUB_REF_NAME}"; then
+            if git push "$REMOTE" "HEAD:${BRANCH}"; then
               exit 0
             fi
             echo "::warning::push rejected (attempt ${i}), rebasing"
-            git fetch "$REMOTE" "${GITHUB_REF_NAME}"
+            git fetch "$REMOTE" "${BRANCH}"
             git rebase FETCH_HEAD
           done
           echo "::error::failed to push metrics after 3 attempts"
           exit 1
+
+      # ------------------------------------------------------------------
+      # サイクルが完走したときだけ main へ取り込む。
+      # 途中で落ちたサイクルの成果は作業ブランチに閉じたままになり、
+      # main は常に「完走したサイクル」だけで構成される。
+      # main の metrics/cycle-N.json が増えないので、次回の実行は
+      # 同じサイクル番号をやり直す。
+      # ------------------------------------------------------------------
+      - name: Merge to main
+        if: >-
+          needs.dev.result == 'success' &&
+          needs.feedback.result == 'success' &&
+          needs.slides.result == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CYCLE: ${{ needs.config.outputs.cycle }}
+          BRANCH: ${{ needs.config.outputs.branch }}
+        run: |
+          set -euo pipefail
+          REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+          # 作業ブランチは main の先端から切っており、loop は concurrency で
+          # 直列化されているため、通常は fast-forward で入る。
+          if ! git push "$REMOTE" "HEAD:main"; then
+            echo "::error::main への fast-forward に失敗しました。ブランチ ${BRANCH} を手動で確認してください。"
+            exit 1
+          fi
+          echo "::notice::サイクル ${CYCLE} を main に取り込みました。"
+
+          # 完走したサイクルの作業ブランチは不要（履歴は main にある）
+          git push "$REMOTE" --delete "${BRANCH}" || \
+            echo "::warning::作業ブランチ ${BRANCH} の削除に失敗しました（無害）"
+
+      - name: 未完走サイクルの通知
+        if: >-
+          needs.dev.result != 'success' ||
+          needs.feedback.result != 'success' ||
+          needs.slides.result != 'success'
+        env:
+          BRANCH: ${{ needs.config.outputs.branch }}
+          CYCLE: ${{ needs.config.outputs.cycle }}
+        run: |
+          echo "::warning::サイクル ${CYCLE} は完走しませんでした。main は変更していません。"
+          echo "::warning::途中までの成果はブランチ ${BRANCH} に残っています。次回の実行は同じサイクル ${CYCLE} をやり直します。"
 
       - uses: actions/upload-artifact@v4
         with:

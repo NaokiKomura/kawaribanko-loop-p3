@@ -33,20 +33,36 @@
 ```
 毎日 00:00 / 10:00 / 20:00 JST (リポジトリごとにずらして cron)
   └─ loop.yml
-       ├─ config    サイクル番号を決定（metrics/ の数 + 1）、7 を超えたら停止
+       ├─ config    サイクル番号を決定（main の metrics/ の数 + 1）、7 を超えたら停止
+       │            作業ブランチ cycle-N-<run_id> を main の先端から作成
        ├─ dev       開発担当   → app/, docs/journal/, PROGRESS.md, TASKS.md, ROADMAP.md
        ├─ feedback  レビュー担当 → docs/reviews/, TASKS.md
        ├─ slides    広報担当   → slides/report.md
        │              ※ 3ロールとも app/data/diary.json に日記を1件ずつ追記
+       │              ※ 3ロールとも作業ブランチに commit / push する（main には触らない）
        └─ wrap      メトリクス記録 + スライドのビルド検証 → metrics/cycle-N.json
+                    3ロールすべて成功していれば作業ブランチを main へ fast-forward し、
+                    ブランチを削除する。1つでも失敗していれば main は変更しない。
 
 publish.yml（承認ゲート付き）
-  └─ gate（あなたの承認待ち）→ deploy（GitHub Pages へ公開）
+  └─ gate（あなたの承認待ち）→ deploy（main を GitHub Pages へ公開）
 ```
 
 - 実行環境が毎回まっさらなので、**セッションの肥大化（`/clear` や `/compact` の必要）が起きません**。
 - ループ間の記憶はすべてリポジトリ内のファイルで引き継がれます。
 - 3パターンとも**同一のジョブ構造・同一のプロンプト文字列**で走ります（違うのは担当と発火時刻だけ）。
+
+### main は「完走したサイクル」だけで構成される
+
+各サイクルは作業ブランチ `cycle-N-<run_id>` の上で進み、**3ロールすべてが成功したときだけ**
+main に取り込まれます。途中で落ちたサイクルは：
+
+- main が一切変わらないので、`app/` が中途半端な状態で次サイクルに引き継がれない
+- main の `metrics/cycle-N.json` が増えないので、**次回の実行は同じサイクル N をやり直す**
+  （インフラ障害が 7 サイクルの試行枠を食わない）
+- 途中までの成果は作業ブランチに残るため、後から原因を調査できる
+
+失敗を含むサイクルのメトリクスは `metrics/failed/` に書かれ、サイクル数のカウント対象外です。
 
 ## 評価に天井を作らない設計
 

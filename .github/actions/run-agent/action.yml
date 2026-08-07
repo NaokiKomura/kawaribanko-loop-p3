@@ -42,6 +42,9 @@ inputs:
   github-token:
     description: "コミット/プッシュ用トークン（claude-code-action の OIDC 経路回避にも使用）"
     required: true
+  branch:
+    description: "成果を push する作業ブランチ（main には直接 push しない）"
+    required: true
 
 runs:
   using: composite
@@ -131,6 +134,7 @@ runs:
         ROLE: ${{ inputs.role }}
         AGENT: ${{ inputs.agent }}
         CYCLE: ${{ inputs.cycle }}
+        BRANCH: ${{ inputs.branch }}
       run: |
         set -euo pipefail
         git config user.name "loop-bot"
@@ -146,11 +150,11 @@ runs:
         # rebase してリトライする（失敗はジョブ失敗として表面化させる）。
         REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
         for i in 1 2 3; do
-          if git push "$REMOTE" "HEAD:${GITHUB_REF_NAME}"; then
+          if git push "$REMOTE" "HEAD:${BRANCH}"; then
             exit 0
           fi
-          echo "::warning::push rejected (attempt ${i}), rebasing onto origin/${GITHUB_REF_NAME}"
-          git fetch "$REMOTE" "${GITHUB_REF_NAME}"
+          echo "::warning::push rejected (attempt ${i}), rebasing onto ${BRANCH}"
+          git fetch "$REMOTE" "${BRANCH}"
           git rebase FETCH_HEAD
         done
         echo "::error::failed to push after 3 attempts"
