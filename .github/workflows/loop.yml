@@ -99,6 +99,10 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+          # 前のジョブが push した成果を引き継ぐため、起動時 SHA ではなく
+          # ブランチの最新を取る（既定の github.sha だと前工程の成果が見えず、
+          # push も non-fast-forward で失敗する）。
+          ref: ${{ github.ref_name }}
       - uses: ./.github/actions/run-agent
         with:
           role: dev
@@ -126,6 +130,10 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+          # 前のジョブが push した成果を引き継ぐため、起動時 SHA ではなく
+          # ブランチの最新を取る（既定の github.sha だと前工程の成果が見えず、
+          # push も non-fast-forward で失敗する）。
+          ref: ${{ github.ref_name }}
       - uses: ./.github/actions/run-agent
         with:
           role: feedback
@@ -153,6 +161,10 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+          # 前のジョブが push した成果を引き継ぐため、起動時 SHA ではなく
+          # ブランチの最新を取る（既定の github.sha だと前工程の成果が見えず、
+          # push も non-fast-forward で失敗する）。
+          ref: ${{ github.ref_name }}
       - uses: ./.github/actions/run-agent
         with:
           role: slides
@@ -180,6 +192,10 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+          # 前のジョブが push した成果を引き継ぐため、起動時 SHA ではなく
+          # ブランチの最新を取る（既定の github.sha だと前工程の成果が見えず、
+          # push も non-fast-forward で失敗する）。
+          ref: ${{ github.ref_name }}
 
       - uses: actions/setup-node@v4
         with:
@@ -219,8 +235,18 @@ jobs:
             exit 0
           fi
           git commit -m "cycle ${CYCLE}: metrics"
-          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
-            "HEAD:${GITHUB_REF_NAME}"
+
+          REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          for i in 1 2 3; do
+            if git push "$REMOTE" "HEAD:${GITHUB_REF_NAME}"; then
+              exit 0
+            fi
+            echo "::warning::push rejected (attempt ${i}), rebasing"
+            git fetch "$REMOTE" "${GITHUB_REF_NAME}"
+            git rebase FETCH_HEAD
+          done
+          echo "::error::failed to push metrics after 3 attempts"
+          exit 1
 
       - uses: actions/upload-artifact@v4
         with:

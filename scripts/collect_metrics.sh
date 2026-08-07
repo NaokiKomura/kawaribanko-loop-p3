@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # 1サイクル分の実測値を metrics/cycle-N.json に書き出す。
+# ロールが1つでも失敗した場合は metrics/failed/ に退避する（サイクル数を消費させない）。
 # loop.yml の wrap ジョブから env 経由で呼ばれる。
 set -euo pipefail
 
@@ -90,7 +91,28 @@ fi
 # --- 成果物の存在確認 -------------------------------------------------
 has() { [ -e "$1" ] && echo true || echo false; }
 
+# --- 出力先の決定 -----------------------------------------------------
+# ロールが1つでも失敗していたら、そのサイクルは「実験の1試行」として
+# 成立していない。metrics/failed/ に退避し metrics/cycle-N.json は作らない
+# ことで、loop.yml の config ジョブが数えるサイクル数を進めない
+# （config は `find metrics -maxdepth 1 -name 'cycle-*.json'` で数えるため、
+#  サブディレクトリに置けばカウント対象外になる）。
+CYCLE_OK=true
+for r in "${DEV_RESULT:-}" "${FEEDBACK_RESULT:-}" "${SLIDES_RESULT:-}"; do
+  case "$r" in
+    success | "") ;;
+    *) CYCLE_OK=false ;;
+  esac
+done
+
 mkdir -p metrics
+if [ "$CYCLE_OK" = true ]; then
+  OUT="metrics/cycle-${CYCLE}.json"
+else
+  mkdir -p metrics/failed
+  OUT="metrics/failed/cycle-${CYCLE}-${GITHUB_RUN_ID:-manual}.json"
+  echo "::warning::サイクル ${CYCLE} は失敗を含むため ${OUT} に退避します（サイクル数は進みません）"
+fi
 
 jq -n \
   --argjson cycle "$CYCLE" \
@@ -163,7 +185,7 @@ jq -n \
     roadmap_open_items: $roadmap_open,
     delta_verdict: $delta,
     ambition_verdict: $ambition
-  }' > "metrics/cycle-${CYCLE}.json"
+  }' > "$OUT"
 
-echo "==> metrics/cycle-${CYCLE}.json"
-cat "metrics/cycle-${CYCLE}.json"
+echo "==> $OUT"
+cat "$OUT"

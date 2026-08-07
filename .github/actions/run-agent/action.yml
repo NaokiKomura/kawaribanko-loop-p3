@@ -40,7 +40,7 @@ inputs:
     required: false
     default: ""
   github-token:
-    description: "コミット/プッシュ用トークン（エージェント実行中は渡さない）"
+    description: "コミット/プッシュ用トークン（claude-code-action の OIDC 経路回避にも使用）"
     required: true
 
 runs:
@@ -76,6 +76,10 @@ runs:
       if: inputs.agent == 'claude'
       uses: anthropics/claude-code-action@v1
       with:
+        # 渡さないと action が OIDC → GitHub App トークン交換の経路に入り、
+        # `id-token: write` 権限と Claude GitHub App の導入が必須になる。
+        # ここは GITHUB_TOKEN（contents: write のみ）を明示的に渡して回避する。
+        github_token: ${{ inputs.github-token }}
         claude_code_oauth_token: ${{ inputs.claude-code-oauth-token }}
         anthropic_api_key: ${{ inputs.anthropic-api-key }}
         prompt: ${{ steps.prompt.outputs.text }}
@@ -137,5 +141,17 @@ runs:
           exit 0
         fi
         git commit -m "cycle ${CYCLE}: ${ROLE} by ${AGENT}"
-        git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
-          "HEAD:${GITHUB_REF_NAME}"
+
+        # 直列実行なので競合はまず起きないが、起きた場合に静かに壊れないよう
+        # rebase してリトライする（失敗はジョブ失敗として表面化させる）。
+        REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+        for i in 1 2 3; do
+          if git push "$REMOTE" "HEAD:${GITHUB_REF_NAME}"; then
+            exit 0
+          fi
+          echo "::warning::push rejected (attempt ${i}), rebasing onto origin/${GITHUB_REF_NAME}"
+          git fetch "$REMOTE" "${GITHUB_REF_NAME}"
+          git rebase FETCH_HEAD
+        done
+        echo "::error::failed to push after 3 attempts"
+        exit 1
