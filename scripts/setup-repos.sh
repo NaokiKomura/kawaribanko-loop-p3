@@ -98,8 +98,13 @@ for spec in "${PATTERNS[@]}"; do
   )
 
   # --- Secrets --------------------------------------------------------
-  gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo "$FULL" --body "$CLAUDE_CODE_OAUTH_TOKEN"
-  gh secret set OPENAI_API_KEY          --repo "$FULL" --body "$OPENAI_API_KEY"
+  # 末尾改行が1文字でも混ざると HTTP ヘッダ値として不正になり、
+  # Claude Code が API を呼ぶ前に
+  #   API Error: Header 'Authorization' has invalid value
+  # で即死する。値は必ず trim してから登録する。
+  trim() { printf '%s' "$1" | tr -d '\r\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'; }
+  gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo "$FULL" --body "$(trim "$CLAUDE_CODE_OAUTH_TOKEN")"
+  gh secret set OPENAI_API_KEY          --repo "$FULL" --body "$(trim "$OPENAI_API_KEY")"
   echo "  ✓ secrets"
 
   # --- 承認ゲート用 environment（あなたを必須レビュアーに）-----------

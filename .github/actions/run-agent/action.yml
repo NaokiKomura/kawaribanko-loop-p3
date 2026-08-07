@@ -73,7 +73,41 @@ runs:
         } >> "$GITHUB_OUTPUT"
 
     # ------------------------------------------------------------------
-    # 2. エージェント実行（どちらか一方だけが走る）
+    # 2. 認証情報の正規化
+    #    シークレット登録時に紛れ込んだ前後の空白・改行を取り除く。
+    #    改行を含む値は HTTP ヘッダに入れられないため、Claude Code は
+    #    API を呼ぶ前にローカルで
+    #      API Error: Header 'Authorization' has invalid value
+    #    を返して即死する（実際にこれで1サイクルを失った）。
+    # ------------------------------------------------------------------
+    - name: Normalize credentials
+      id: creds
+      shell: bash
+      env:
+        OAUTH: ${{ inputs.claude-code-oauth-token }}
+        ANTHROPIC: ${{ inputs.anthropic-api-key }}
+        OPENAI: ${{ inputs.openai-api-key }}
+      run: |
+        set -euo pipefail
+        emit() {
+          # $1=出力名 $2=値。改行・復帰・前後空白を除去したうえで、
+          # 加工後の値も必ずマスク登録してからログに出しうる場所へ渡す。
+          local name="$1" value
+          value="$(printf '%s' "$2" | tr -d '\r\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+          if [ -n "$value" ]; then
+            echo "::add-mask::${value}"
+            if [ "$value" != "$2" ]; then
+              echo "::warning::シークレット ${name} に余分な空白／改行が含まれていたため除去しました。gh secret set し直すことを推奨します。"
+            fi
+          fi
+          echo "${name}=${value}" >> "$GITHUB_OUTPUT"
+        }
+        emit oauth     "${OAUTH:-}"
+        emit anthropic "${ANTHROPIC:-}"
+        emit openai    "${OPENAI:-}"
+
+    # ------------------------------------------------------------------
+    # 3. エージェント実行（どちらか一方だけが走る）
     # ------------------------------------------------------------------
     - name: Run Claude Code
       if: inputs.agent == 'claude'
@@ -83,8 +117,8 @@ runs:
         # `id-token: write` 権限と Claude GitHub App の導入が必須になる。
         # ここは GITHUB_TOKEN（contents: write のみ）を明示的に渡して回避する。
         github_token: ${{ inputs.github-token }}
-        claude_code_oauth_token: ${{ inputs.claude-code-oauth-token }}
-        anthropic_api_key: ${{ inputs.anthropic-api-key }}
+        claude_code_oauth_token: ${{ steps.creds.outputs.oauth }}
+        anthropic_api_key: ${{ steps.creds.outputs.anthropic }}
         prompt: ${{ steps.prompt.outputs.text }}
         claude_args: |
           --model ${{ inputs.model }}
@@ -95,7 +129,7 @@ runs:
       if: inputs.agent == 'codex'
       uses: openai/codex-action@v1
       with:
-        openai-api-key: ${{ inputs.openai-api-key }}
+        openai-api-key: ${{ steps.creds.outputs.openai }}
         prompt: ${{ steps.prompt.outputs.text }}
         permission-profile: ":workspace"
         safety-strategy: drop-sudo
@@ -103,7 +137,7 @@ runs:
         effort: ${{ inputs.codex-effort }}
 
     # ------------------------------------------------------------------
-    # 3. 保護パスへの変更を破棄（自己改変によるループ暴走の防止）
+    # 4. 保護パスへの変更を破棄（自己改変によるループ暴走の防止）
     # ------------------------------------------------------------------
     - name: Revert protected paths
       shell: bash
@@ -125,7 +159,7 @@ runs:
         fi
 
     # ------------------------------------------------------------------
-    # 4. コミット & プッシュ
+    # 5. コミット & プッシュ
     # ------------------------------------------------------------------
     - name: Commit and push
       shell: bash
