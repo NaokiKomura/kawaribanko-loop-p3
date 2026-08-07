@@ -161,6 +161,26 @@ GitHub からメール・モバイルアプリのプッシュ通知で承認依�
 | 停滞検出 | レビュー担当が毎回 Δ判定（`ADVANCED / MARGINAL / STALLED`）を下す |
 | 日記の改竄検出 | 過去エントリが書き換え・削除されると `metrics` の `diary.tampered_past_entries` に記録される |
 
+### エージェントが即座に失敗するとき
+
+dev / feedback / slides が **10秒未満で失敗**し、ログに
+
+```
+API Error: Header 'Authorization' has invalid value
+```
+
+が出ている場合、シークレットの値そのものではなく**値に混ざった文字**が原因です。
+改行・タブ・制御文字・ゼロ幅空白などは HTTP ヘッダ値として不正なため、
+Claude Code はネットワークに出る前にローカルで失敗します（課金0・トークン0）。
+
+ワークフローの「Normalize credentials」ステップが可視 ASCII 以外を自動で除去し、
+除去が発生した場合は警告を出します。警告が出たら登録し直してください。
+
+```bash
+gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo <owner>/<repo> \
+  --body "$(claude setup-token | LC_ALL=C tr -cd '\041-\176')"
+```
+
 ## 比較のしかた
 
 `metrics/cycle-*.json` に毎サイクルの実測値が入ります。

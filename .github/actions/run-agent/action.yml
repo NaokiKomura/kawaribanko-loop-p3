@@ -74,11 +74,11 @@ runs:
 
     # ------------------------------------------------------------------
     # 2. 認証情報の正規化
-    #    シークレット登録時に紛れ込んだ前後の空白・改行を取り除く。
-    #    改行を含む値は HTTP ヘッダに入れられないため、Claude Code は
-    #    API を呼ぶ前にローカルで
+    #    シークレット登録時に紛れ込んだ、HTTP ヘッダ値として使えない文字
+    #    （改行・タブ・制御文字・ゼロ幅空白などの非 ASCII）を取り除く。
+    #    1文字でも混ざると Claude Code は API を呼ぶ前にローカルで
     #      API Error: Header 'Authorization' has invalid value
-    #    を返して即死する（実際にこれで1サイクルを失った）。
+    #    を返して即死する（実測 ~97ms・課金0）。実際にこれで数回失敗した。
     # ------------------------------------------------------------------
     - name: Normalize credentials
       id: creds
@@ -93,11 +93,14 @@ runs:
           # $1=出力名 $2=値。改行・復帰・前後空白を除去したうえで、
           # 加工後の値も必ずマスク登録してからログに出しうる場所へ渡す。
           local name="$1" value
-          value="$(printf '%s' "$2" | tr -d '\r\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+          # HTTP ヘッダ値に使えるのは可視 ASCII のみ。制御文字・空白・
+          # 非 ASCII（コピペで紛れ込むゼロ幅空白や全角文字など）を落とす。
+          value="$(printf '%s' "$2" | LC_ALL=C tr -cd '\041-\176')"
           if [ -n "$value" ]; then
             echo "::add-mask::${value}"
             if [ "$value" != "$2" ]; then
-              echo "::warning::シークレット ${name} に余分な空白／改行が含まれていたため除去しました。gh secret set し直すことを推奨します。"
+              # 値そのものは出さず、長さと除去バイト数だけ報告する
+              echo "::warning::シークレット ${name} に HTTP ヘッダで使えない文字が含まれていたため除去しました（${#2} → ${#value} バイト）。gh secret set し直すことを推奨します。"
             fi
           fi
           echo "${name}=${value}" >> "$GITHUB_OUTPUT"
@@ -119,6 +122,8 @@ runs:
         github_token: ${{ inputs.github-token }}
         claude_code_oauth_token: ${{ steps.creds.outputs.oauth }}
         anthropic_api_key: ${{ steps.creds.outputs.anthropic }}
+        # show_full_output はツール実行結果ごとログに出すため、public リポジトリでは
+        # 有効にしない（切り分けが必要なときだけ一時的に付けて、必ず戻すこと）。
         prompt: ${{ steps.prompt.outputs.text }}
         claude_args: |
           --model ${{ inputs.model }}

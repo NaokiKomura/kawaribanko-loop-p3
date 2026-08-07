@@ -98,11 +98,12 @@ for spec in "${PATTERNS[@]}"; do
   )
 
   # --- Secrets --------------------------------------------------------
-  # 末尾改行が1文字でも混ざると HTTP ヘッダ値として不正になり、
-  # Claude Code が API を呼ぶ前に
+  # HTTP ヘッダ値に使えない文字が1文字でも混ざると、Claude Code は
+  # API を呼ぶ前に
   #   API Error: Header 'Authorization' has invalid value
-  # で即死する。値は必ず trim してから登録する。
-  trim() { printf '%s' "$1" | tr -d '\r\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'; }
+  # で即死する。改行だけでなくタブ・制御文字・コピペで紛れ込む
+  # ゼロ幅空白などの非 ASCII も落とすため、可視 ASCII だけを通す。
+  trim() { printf '%s' "$1" | LC_ALL=C tr -cd '\041-\176'; }
   gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo "$FULL" --body "$(trim "$CLAUDE_CODE_OAUTH_TOKEN")"
   gh secret set OPENAI_API_KEY          --repo "$FULL" --body "$(trim "$OPENAI_API_KEY")"
   echo "  ✓ secrets"
