@@ -73,6 +73,28 @@ section blockquote {
   font-style: normal;
 }
 
+section.statement {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  text-align: center;
+}
+section.statement h1 { font-size: 2.2em; }
+section.statement p { font-size: 1.25em; }
+
+section.diary { font-size: 22px; }
+section.diary h1 { font-size: 1.65em; }
+section.diary h3 { margin: 0.45em 0 0.1em; }
+section.diary blockquote { margin: 0.15em 0 0.45em; }
+
+section.stats table { width: 100%; table-layout: fixed; margin: 1.5em 0 1em; }
+section.stats th { padding: 0.8em 0.35em; border-bottom: 0; background: #fffdf9; text-align: center; }
+section.stats td { padding: 0.8em 0.35em; text-align: center; vertical-align: middle; }
+section.stats th strong { font-size: 2.2em; line-height: 1.1; }
+section.stats tr:last-child td { color: var(--sub); font-size: 0.78em; }
+
+section.next h1 { font-size: 2.1em; }
+
 /* 表紙 */
 section.lead {
   display: flex;
