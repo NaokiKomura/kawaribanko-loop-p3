@@ -11,10 +11,10 @@
 
 ## 今サイクルのタスク
 
-- [ ] `app/data/diary.json` を読み込み、3人の日記を時系列で表示する
-- [ ] 書き手ごとに見分けがつくようにする（名前・絵文字・色は JSON の `members` にある）
-- [ ] `python3 -m http.server 8000 --directory app` で動く状態にする
-- [ ] `ROADMAP.md` に「次に挑むこと」を自分で書き直す（最低要件の先を考える）
+- [x] `app/data/diary.json` を読み込み、3人の日記を時系列で表示する
+- [x] 書き手ごとに見分けがつくようにする（名前・絵文字・色は JSON の `members` にある）
+- [x] `python3 -m http.server 8000 --directory app` で動く状態にする
+- [x] `ROADMAP.md` に「次に挑むこと」を自分で書き直す（最低要件の先を考える）
 
 ## 保留中 / 次以降
 

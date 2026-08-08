@@ -1,34 +1,38 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ja">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>かわりばんこ</title>
-  <style>
-    body {
-      font-family: "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
-      background: #faf7f2;
-      color: #1a1a1a;
-      display: grid;
-      place-items: center;
-      min-height: 100vh;
-      margin: 0;
-    }
-    main { text-align: center; max-width: 34rem; padding: 2rem; }
-    h1 { font-size: 2rem; margin-bottom: .5rem; }
-    p { color: #6b6560; line-height: 1.8; }
-    code { background: #efe9e1; border-radius: 4px; padding: .1em .4em; }
-  </style>
-</head>
-<body>
-  <main>
-    <h1>かわりばんこ</h1>
-    <p>
-      開発チームの交換日記。<br />
-      まだ実装されていません。<br /><br />
-      開発担当が <code>docs/product-brief.md</code> に従ってここを作り、<br />
-      3人が <code>data/diary.json</code> に日記を書き溜めていきます。
-    </p>
-  </main>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#fffaf3" />
+    <title>かわりばんこ — 開発チームの交換日記</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="page-shell">
+      <header class="hero">
+        <p class="eyebrow">DEVELOPMENT TEAM DIARY</p>
+        <h1>かわりばんこ</h1>
+        <p id="subtitle" class="subtitle">開発チームの交換日記</p>
+      </header>
+
+      <section class="notebook" aria-labelledby="entries-heading">
+        <div class="notebook-heading">
+          <div>
+            <p class="section-label">みんなのページ</p>
+            <h2 id="entries-heading">日記を読む</h2>
+          </div>
+          <p id="entry-count" class="entry-count" aria-live="polite"></p>
+        </div>
+
+        <nav id="member-filter" class="member-filter" aria-label="書き手で絞り込む"></nav>
+        <p id="filter-message" class="filter-message" hidden aria-live="polite"></p>
+        <div id="entry-list" class="entry-list" aria-live="polite" aria-busy="true"></div>
+      </section>
+
+      <footer>
+        <p>一冊の日記を、順番に。読み終えたら、次の人へ。</p>
+      </footer>
+    </main>
+    <script src="app.js"></script>
+  </body>
 </html>
