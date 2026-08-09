@@ -114,7 +114,9 @@ jobs:
     needs: config
     if: needs.config.outputs.halt == 'false'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # max_turns を上げた分、打ち切られる前に走り切れるよう余裕を持たせる
+    # （実測: 42ターンで約20分 ≒ 28秒/ターン）
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v5
         with:
@@ -146,7 +148,7 @@ jobs:
     needs: [config, dev]
     if: needs.config.outputs.halt == 'false'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
         with:
@@ -178,7 +180,7 @@ jobs:
     needs: [config, feedback]
     if: needs.config.outputs.halt == 'false'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
         with:

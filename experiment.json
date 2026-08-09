@@ -29,5 +29,5 @@
   },
   "schedule_jst": "20:00",
   "max_cycles": 7,
-  "max_turns": 40
+  "max_turns": 100
 }

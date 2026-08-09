@@ -27,7 +27,7 @@ inputs:
   max-turns:
     description: "Claude Code の最大ターン数"
     required: false
-    default: "40"
+    default: "100"
   claude-code-oauth-token:
     description: "Claude Pro/Max のサブスク枠で実行する場合のトークン（`claude setup-token` で発行）"
     required: false
@@ -143,8 +143,16 @@ runs:
 
     # ------------------------------------------------------------------
     # 4. 保護パスへの変更を破棄（自己改変によるループ暴走の防止）
+    #
+    #    以降は `if: always()` を付け、エージェントのステップが失敗しても
+    #    作業ツリーの成果を作業ブランチに残す。composite action は
+    #    既定だと失敗した時点で後続ステップを飛ばすため、これが無いと
+    #    「Claude は完走したのに action の事後チェックだけが落ちた」場合に
+    #    その回の成果が丸ごと消える（cycle 3 で実際に約20分・$2.45 を失った）。
+    #    ジョブ自体は失敗のままなので、wrap は main へ取り込まない。
     # ------------------------------------------------------------------
     - name: Revert protected paths
+      if: always()
       shell: bash
       run: |
         set -euo pipefail
@@ -167,6 +175,7 @@ runs:
     # 5. コミット & プッシュ
     # ------------------------------------------------------------------
     - name: Commit and push
+      if: always()
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
