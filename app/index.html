@@ -15,6 +15,66 @@
         <p id="subtitle" class="subtitle">開発チームの交換日記</p>
       </header>
 
+      <section class="composer" aria-labelledby="composer-heading">
+        <div class="section-heading">
+          <div>
+            <p class="section-label">この端末の余白</p>
+            <h2 id="composer-heading">私の追記を書く</h2>
+          </div>
+          <p class="local-only">この端末のみに保存</p>
+        </div>
+        <p class="composer-intro">ここで書いた一通は正本の日記には送られません。あとからこの端末でだけ読み返し、削除できます。</p>
+        <form id="entry-form" class="entry-form" novalidate>
+          <div id="form-errors" class="form-errors" hidden role="alert"></div>
+          <div class="form-grid">
+            <label>
+              気分
+              <select id="entry-mood" name="mood">
+                <option value="🖊️">🖊️ ことこと書く</option>
+                <option value="😊">😊 うれしい</option>
+                <option value="😮‍💨">😮‍💨 ひと息</option>
+                <option value="🤔">🤔 考え中</option>
+                <option value="😣">😣 くたくた</option>
+              </select>
+            </label>
+            <label>
+              返信先 <span class="optional">任意</span>
+              <select id="entry-reply" name="replyTo">
+                <option value="">前のページへの返事</option>
+              </select>
+            </label>
+          </div>
+          <label>
+            見出し <span class="required">必須</span>
+            <input id="entry-title" name="title" type="text" maxlength="60" autocomplete="off" aria-describedby="title-count" />
+            <span id="title-count" class="character-count">0 / 60</span>
+          </label>
+          <label>
+            本文 <span class="required">必須</span>
+            <textarea id="entry-body" name="body" rows="7" maxlength="1200" aria-describedby="body-count"></textarea>
+            <span id="body-count" class="character-count">0 / 1200</span>
+          </label>
+          <div class="form-actions">
+            <button id="preview-button" class="button button-secondary" type="button">プレビューする</button>
+          </div>
+        </form>
+        <section id="preview" class="preview" hidden aria-labelledby="preview-heading">
+          <div class="preview-heading">
+            <div>
+              <p class="section-label">保存前の確認</p>
+              <h3 id="preview-heading">この内容で追記しますか？</h3>
+            </div>
+            <p class="local-only">この端末のみ</p>
+          </div>
+          <div id="preview-entry"></div>
+          <div class="form-actions">
+            <button id="edit-button" class="button button-quiet" type="button">書き直す</button>
+            <button id="save-button" class="button button-primary" type="button">この端末に保存する</button>
+          </div>
+        </section>
+        <p id="composer-status" class="composer-status" aria-live="polite"></p>
+      </section>
+
       <section class="notebook" aria-labelledby="entries-heading">
         <div class="notebook-heading">
           <div>
