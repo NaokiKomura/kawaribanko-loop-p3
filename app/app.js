@@ -19,9 +19,18 @@ const previewButton = document.querySelector("#preview-button");
 const editButton = document.querySelector("#edit-button");
 const saveButton = document.querySelector("#save-button");
 const composerStatus = document.querySelector("#composer-status");
+const exportButton = document.querySelector("#export-button");
+const importFile = document.querySelector("#import-file");
+const importPreview = document.querySelector("#import-preview");
+const importSummary = document.querySelector("#import-summary");
+const cancelImport = document.querySelector("#cancel-import");
+const confirmImport = document.querySelector("#confirm-import");
+const recoveryPanel = document.querySelector("#recovery-panel");
+const exportRecovery = document.querySelector("#export-recovery");
+const discardRecovery = document.querySelector("#discard-recovery");
+const transferStatus = document.querySelector("#transfer-status");
 
 const LOCAL_STORAGE_KEY = "kawaribanko.local-entries.v1";
-const LOCAL_STORAGE_VERSION = 1;
 const LOCAL_MEMBER = { id: "local", name: "この端末のあなた", emoji: "🖊️", color: "#8a6099" };
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -30,6 +39,8 @@ let selectedAuthor = "all";
 let localEntries = [];
 let storageNotice = "";
 let draftForPreview = null;
+let storageRecovery = null;
+let pendingImport = null;
 
 function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -61,20 +72,6 @@ function isValidSourceEntry(entry) {
     && isValidReplyTo(entry.replyTo);
 }
 
-function isValidLocalEntry(entry) {
-  return isObject(entry)
-    && isNonEmptyString(entry.id)
-    && entry.id.startsWith("local-")
-    && entry.author === "local"
-    && isValidDate(entry.date)
-    && isNonEmptyString(entry.mood)
-    && isNonEmptyString(entry.title)
-    && isNonEmptyString(entry.body)
-    && isValidReplyTo(entry.replyTo)
-    && isNonEmptyString(entry.createdAt)
-    && !Number.isNaN(Date.parse(entry.createdAt));
-}
-
 function sanitizeDiary(rawDiary) {
   if (!isObject(rawDiary) || !Array.isArray(rawDiary.members) || !Array.isArray(rawDiary.entries)) {
     throw new Error("Invalid diary data");
@@ -86,7 +83,9 @@ function sanitizeDiary(rawDiary) {
     && isNonEmptyString(member.color));
   if (members.length === 0) throw new Error("No valid diary members");
 
-  const entries = rawDiary.entries.filter(isValidSourceEntry).map((entry) => ({ ...entry, isLocal: false }));
+  const seenIds = new Set();
+  const entries = rawDiary.entries.filter((entry) => isValidSourceEntry(entry) && !seenIds.has(entry.id) && seenIds.add(entry.id))
+    .map((entry) => ({ ...entry, isLocal: false }));
   const skippedEntries = rawDiary.entries.length - entries.length;
   return {
     title: isNonEmptyString(rawDiary.title) ? rawDiary.title : "かわりばんこ",
@@ -100,31 +99,31 @@ function sanitizeDiary(rawDiary) {
 function loadLocalEntries() {
   try {
     const stored = window.localStorage.getItem(LOCAL_STORAGE_KEY);
-    if (!stored) return [];
-    const record = JSON.parse(stored);
-    if (!isObject(record) || record.version !== LOCAL_STORAGE_VERSION || !Array.isArray(record.entries)) {
-      storageNotice = "この端末の古い、または読めない追記は隔離しました。正本の日記には影響していません。";
+    const result = window.DiaryStore.readStored(stored);
+    if (result.state === "recovery") {
+      storageRecovery = result;
+      storageNotice = "読めない以前の追記を見つけたため、新しい保存を止めています。元の内容はまだこの端末に残っています。";
       return [];
     }
-    const validEntries = record.entries.filter(isValidLocalEntry).map((entry) => ({ ...entry, isLocal: true }));
-    const skippedEntries = record.entries.length - validEntries.length;
-    if (skippedEntries > 0) {
-      storageNotice = `この端末の追記 ${skippedEntries} 通は形式が不正なため表示していません。正本の日記には影響していません。`;
-    }
-    return validEntries;
+    return result.entries.map((entry) => ({ ...entry, isLocal: true }));
   } catch (error) {
     console.warn("Could not read local diary entries", error);
-    storageNotice = "この端末の読めない追記は隔離しました。正本の日記には影響していません。";
+    storageNotice = "この端末の追記を読めないため、新しい保存を止めています。";
+    storageRecovery = { raw: "", reason: "storage" };
     return [];
   }
 }
 
-function persistLocalEntries() {
-  const record = {
-    version: LOCAL_STORAGE_VERSION,
-    entries: localEntries.map(({ isLocal, ...entry }) => entry),
-  };
-  window.localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(record));
+function commitLocalEntries(entries) {
+  window.DiaryStore.writeEntries(window.localStorage, LOCAL_STORAGE_KEY, entries);
+  localEntries = entries;
+}
+
+function updateRecoveryControls() {
+  recoveryPanel.hidden = !storageRecovery;
+  entryForm.querySelectorAll("input, select, textarea, button").forEach((control) => { control.disabled = Boolean(storageRecovery); });
+  importFile.disabled = Boolean(storageRecovery);
+  confirmImport.disabled = Boolean(storageRecovery);
 }
 
 function memberFor(entry) {
@@ -181,6 +180,9 @@ function createEntry(entry, options = {}) {
   const member = memberFor(entry);
   const card = document.createElement("article");
   card.className = `entry-card${entry.isLocal ? " entry-card--local" : ""}`;
+  card.id = `entry-card-${encodeURIComponent(entry.id)}`;
+  card.dataset.entryId = entry.id;
+  card.tabIndex = -1;
   card.style.setProperty("--member-color", member.color);
 
   const meta = document.createElement("div");
@@ -214,6 +216,21 @@ function createEntry(entry, options = {}) {
     reply.className = "reply-note";
     reply.textContent = `↳ ${repliedEntry ? `${memberFor(repliedEntry).name}の「${repliedEntry.title}」へ` : "前のページへの返事"}`;
     card.append(reply);
+    if (repliedEntry) {
+      card.append(createNavigationButton("返事の元を読む", repliedEntry.id));
+    } else {
+      const missing = document.createElement("p");
+      missing.className = "reply-missing";
+      missing.textContent = "返信先のページは、この日記では辿れません。";
+      card.append(missing);
+    }
+  }
+  const replies = allEntries().filter((item) => item.replyTo === entry.id);
+  if (replies.length > 0) {
+    const links = document.createElement("div");
+    links.className = "reply-links";
+    replies.forEach((reply) => links.append(createNavigationButton(`このページへの返事：${reply.title}`, reply.id)));
+    card.append(links);
   }
   if (entry.isLocal && options.allowDelete) {
     const actions = document.createElement("div");
@@ -228,6 +245,16 @@ function createEntry(entry, options = {}) {
     card.append(actions);
   }
   return card;
+}
+
+function createNavigationButton(label, targetId) {
+  const button = document.createElement("button");
+  button.className = "reply-link";
+  button.type = "button";
+  button.dataset.action = "navigate-entry";
+  button.dataset.entryId = targetId;
+  button.textContent = label;
+  return button;
 }
 
 function renderEntries() {
@@ -249,6 +276,26 @@ function renderEntries() {
     return;
   }
   entryList.append(...entries.map((entry) => createEntry(entry, { allowDelete: true })));
+}
+
+function navigateToEntry(id) {
+  const target = allEntries().find((entry) => entry.id === id);
+  if (!target) {
+    composerStatus.textContent = "返信先のページは、この日記では辿れません。";
+    return;
+  }
+  if (selectedAuthor !== "all") {
+    selectedAuthor = "all";
+    renderFilters();
+    renderEntries();
+  }
+  const card = Array.from(entryList.querySelectorAll("[data-entry-id]")).find((item) => item.dataset.entryId === id);
+  if (!card) {
+    composerStatus.textContent = "返信先のページを表示できませんでした。";
+    return;
+  }
+  card.focus({ preventScroll: true });
+  card.scrollIntoView({ behavior: "smooth", block: "center" });
 }
 
 function populateReplyOptions() {
@@ -298,6 +345,13 @@ function makeLocalId() {
   return `local-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+function makeUnusedLocalId() {
+  let id = makeLocalId();
+  const used = new Set(allEntries().map((entry) => entry.id));
+  while (used.has(id)) id = makeLocalId();
+  return id;
+}
+
 function draftFromForm() {
   const title = titleInput.value.trim();
   const body = bodyInput.value.trim();
@@ -309,7 +363,7 @@ function draftFromForm() {
   setFormErrors(errors);
   if (errors.length > 0) return null;
   return {
-    id: makeLocalId(),
+    id: makeUnusedLocalId(),
     author: "local",
     date: today(),
     mood: moodInput.value,
@@ -332,11 +386,13 @@ function showPreview() {
 
 function saveDraft() {
   if (!draftForPreview) return;
+  if (storageRecovery) {
+    composerStatus.textContent = "以前の追記を保護しているため、先に書き出すか破棄してください。";
+    return;
+  }
   try {
-    localEntries.push(draftForPreview);
-    persistLocalEntries();
+    commitLocalEntries([...localEntries, draftForPreview]);
   } catch (error) {
-    localEntries = localEntries.filter((entry) => entry.id !== draftForPreview.id);
     console.error("Could not save local diary entry", error);
     composerStatus.textContent = "この端末に保存できませんでした。ブラウザの保存領域を確認して、もう一度試してください。";
     return;
@@ -358,11 +414,9 @@ function deleteLocalEntry(id) {
   if (!window.confirm(`「${entry.title}」をこの端末から削除しますか？ 正本の日記は変更されません。`)) return;
   const remaining = localEntries.filter((item) => item.id !== id);
   try {
-    localEntries = remaining;
-    persistLocalEntries();
+    commitLocalEntries(remaining);
   } catch (error) {
     console.error("Could not delete local diary entry", error);
-    localEntries = [...remaining, entry];
     composerStatus.textContent = "削除できませんでした。ブラウザの保存領域を確認して、もう一度試してください。";
     return;
   }
@@ -370,6 +424,85 @@ function deleteLocalEntry(id) {
   renderFilters();
   renderEntries();
   composerStatus.textContent = "この端末の追記を削除しました。正本の日記は変更していません。";
+}
+
+function downloadText(text, filename) {
+  const blob = new Blob([text], { type: "application/json" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
+function exportEntries() {
+  const stamp = new Date().toISOString();
+  downloadText(window.DiaryStore.makeExport(localEntries, stamp), `kawaribanko-${stamp.slice(0, 10)}.json`);
+  transferStatus.textContent = `この端末の追記 ${localEntries.length} 通を書き出しました。`;
+}
+
+async function inspectImportFile() {
+  const [file] = importFile.files;
+  importFile.value = "";
+  if (!file || storageRecovery) return;
+  let text;
+  try { text = await file.text(); } catch (error) {
+    transferStatus.textContent = "ファイルを読み取れませんでした。既存の記録は変更していません。";
+    return;
+  }
+  const plan = window.DiaryStore.planImport(text, {
+    sourceEntries: diary.entries,
+    localEntries,
+    makeId: makeUnusedLocalId,
+  });
+  if (!plan.ok) {
+    transferStatus.textContent = plan.errors.join(" ");
+    return;
+  }
+  pendingImport = plan;
+  importSummary.textContent = `${plan.count} 通を追加します${plan.renamed ? `。重なったID ${plan.renamed} 件には新しいIDを割り当て、返信のつながりも引き継ぎます` : ""}。保存するまでこの端末の記録は変わりません。`;
+  importPreview.hidden = false;
+  confirmImport.focus();
+}
+
+function commitImport() {
+  if (!pendingImport || storageRecovery) return;
+  const nextEntries = [...localEntries, ...pendingImport.entries];
+  try {
+    commitLocalEntries(nextEntries);
+  } catch (error) {
+    console.error("Could not import local diary entries", error);
+    transferStatus.textContent = "取り込めませんでした。既存の記録は変更していません。";
+    return;
+  }
+  const count = pendingImport.count;
+  pendingImport = null;
+  importPreview.hidden = true;
+  populateReplyOptions();
+  renderEntries();
+  transferStatus.textContent = `${count} 通をこの端末に取り込みました。正本の日記は変更していません。`;
+}
+
+function exportRecoveryRaw() {
+  if (!storageRecovery) return;
+  downloadText(storageRecovery.raw, `kawaribanko-recovery-${new Date().toISOString().slice(0, 10)}.txt`);
+  transferStatus.textContent = "読めない以前の内容を、そのまま書き出しました。";
+}
+
+function discardProtectedRecovery() {
+  if (!storageRecovery || !window.confirm("読めない以前の追記をこの端末から破棄しますか？ この操作は元に戻せません。")) return;
+  try {
+    commitLocalEntries([]);
+  } catch (error) {
+    console.error("Could not discard protected local diary entries", error);
+    transferStatus.textContent = "破棄できませんでした。元の内容はこの端末に残っています。";
+    return;
+  }
+  storageRecovery = null;
+  updateRecoveryControls();
+  populateReplyOptions();
+  renderEntries();
+  transferStatus.textContent = "以前の追記を破棄しました。新しい追記を保存できます。";
 }
 
 function showError() {
@@ -396,6 +529,7 @@ async function start() {
     renderEntries();
     populateReplyOptions();
     updateCharacterCounts();
+    updateRecoveryControls();
     if (diary.skippedEntries > 0) {
       composerStatus.textContent = `正本の日記の不正な ${diary.skippedEntries} 通は表示していません。ほかのページはそのまま読めます。`;
     } else if (storageNotice) {
@@ -417,7 +551,12 @@ memberFilter.addEventListener("click", (event) => {
 
 entryList.addEventListener("click", (event) => {
   const button = event.target.closest('[data-action="delete-local-entry"]');
-  if (button) deleteLocalEntry(button.dataset.entryId);
+  if (button) {
+    deleteLocalEntry(button.dataset.entryId);
+    return;
+  }
+  const navigation = event.target.closest('[data-action="navigate-entry"]');
+  if (navigation) navigateToEntry(navigation.dataset.entryId);
 });
 
 previewButton.addEventListener("click", showPreview);
@@ -443,5 +582,15 @@ bodyInput.addEventListener("input", () => {
 });
 moodInput.addEventListener("change", invalidatePreview);
 replyInput.addEventListener("change", invalidatePreview);
+exportButton.addEventListener("click", exportEntries);
+importFile.addEventListener("change", inspectImportFile);
+cancelImport.addEventListener("click", () => {
+  pendingImport = null;
+  importPreview.hidden = true;
+  transferStatus.textContent = "取込を取りやめました。既存の記録は変更していません。";
+});
+confirmImport.addEventListener("click", commitImport);
+exportRecovery.addEventListener("click", exportRecoveryRaw);
+discardRecovery.addEventListener("click", discardProtectedRecovery);
 
 start();

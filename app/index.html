@@ -75,6 +75,27 @@
         <p id="composer-status" class="composer-status" aria-live="polite"></p>
       </section>
 
+      <section class="transfer" aria-labelledby="transfer-heading">
+        <div class="section-heading">
+          <div><p class="section-label">ページの引っ越し</p><h2 id="transfer-heading">この端末の追記を持ち運ぶ</h2></div>
+          <p class="local-only">正本は読み取り専用</p>
+        </div>
+        <p class="composer-intro">書き出すのはこの端末の追記だけです。取込は内容と返信先を先に確かめ、確認後に一度だけ保存します。</p>
+        <div class="form-actions transfer-actions">
+          <button id="export-button" class="button button-secondary" type="button">この端末の追記を書き出す</button>
+          <label class="button button-quiet import-label">ファイルを選んで取り込む<input id="import-file" type="file" accept="application/json,.json" hidden /></label>
+        </div>
+        <section id="import-preview" class="import-preview" hidden aria-labelledby="import-preview-heading">
+          <h3 id="import-preview-heading">引っ越し前の確認</h3><p id="import-summary"></p>
+          <div class="form-actions"><button id="cancel-import" class="button button-quiet" type="button">やめる</button><button id="confirm-import" class="button button-primary" type="button">この内容を取り込む</button></div>
+        </section>
+        <section id="recovery-panel" class="recovery-panel" hidden aria-labelledby="recovery-heading">
+          <h3 id="recovery-heading">読めない以前の追記があります</h3><p>安全のため新しい保存と取込を止めています。元の内容を書き出すか、確認してから破棄してください。</p>
+          <div class="form-actions"><button id="export-recovery" class="button button-secondary" type="button">元の内容を書き出す</button><button id="discard-recovery" class="button button-danger" type="button">この記録を破棄して続ける</button></div>
+        </section>
+        <p id="transfer-status" class="composer-status" aria-live="polite"></p>
+      </section>
+
       <section class="notebook" aria-labelledby="entries-heading">
         <div class="notebook-heading">
           <div>
@@ -93,6 +114,7 @@
         <p>一冊の日記を、順番に。読み終えたら、次の人へ。</p>
       </footer>
     </main>
+    <script src="diary-store.js"></script>
     <script src="app.js"></script>
   </body>
 </html>
