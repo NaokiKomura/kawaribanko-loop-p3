@@ -87,8 +87,10 @@
         </div>
         <section id="import-preview" class="import-preview" hidden aria-labelledby="import-preview-heading">
           <h3 id="import-preview-heading">引っ越し前の確認</h3><p id="import-summary"></p>
+          <div id="import-conflicts" class="import-conflicts"></div>
           <div class="form-actions"><button id="cancel-import" class="button button-quiet" type="button">やめる</button><button id="confirm-import" class="button button-primary" type="button">この内容を取り込む</button></div>
         </section>
+        <button id="undo-import" class="button button-quiet undo-import" type="button" hidden>直前の取込を取り消す</button>
         <section id="recovery-panel" class="recovery-panel" hidden aria-labelledby="recovery-heading">
           <h3 id="recovery-heading">読めない以前の追記があります</h3><p>安全のため新しい保存と取込を止めています。元の内容を書き出すか、確認してから破棄してください。</p>
           <div class="form-actions"><button id="export-recovery" class="button button-secondary" type="button">元の内容を書き出す</button><button id="discard-recovery" class="button button-danger" type="button">この記録を破棄して続ける</button></div>

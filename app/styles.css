@@ -109,6 +109,13 @@ h1 { margin: .38rem 0 .35rem; font-size: clamp(2.1rem, 7vw, 3.4rem); letter-spac
 .import-preview, .recovery-panel { margin-top: 1rem; padding: 1rem; border: 1px dashed #9cb6ce; border-radius: 12px; background: #fff; }
 .import-preview p, .recovery-panel p { margin: .55rem 0 0; color: var(--muted); font-size: .88rem; line-height: 1.65; }
 .recovery-panel { border-color: #d9a99f; background: #fff8f5; }
+.import-conflicts { display: grid; gap: .75rem; margin-top: 1rem; }
+.import-conflict { margin: 0; padding: .8rem; border: 1px solid #e1c79a; border-radius: 9px; background: #fffaf0; }
+.import-conflict legend { padding: 0 .25rem; color: #765b2c; font-size: .84rem; font-weight: 800; }
+.import-conflict p { margin-top: .15rem; }
+.conflict-choices { display: grid; gap: .4rem; margin-top: .7rem; }
+.conflict-choices label { display: flex; align-items: center; gap: .45rem; color: var(--ink); font-size: .84rem; font-weight: 700; }
+.undo-import { margin-top: .9rem; border: 1px solid #b8cddd; color: #395a73; }
 
 .notebook {
   position: relative;
