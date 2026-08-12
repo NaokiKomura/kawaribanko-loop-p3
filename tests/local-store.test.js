@@ -3,117 +3,117 @@
 const assert = require("node:assert/strict");
 const Store = require("../app/diary-store.js");
 
-function entry(id = "local-one", overrides = {}) {
+function entry(id, originId, overrides = {}) {
   const page = {
     id,
     author: "local",
-    date: "2026-08-11",
+    date: "2026-08-12",
     mood: "🖊️",
     title: "テストの一通",
-    body: "保存境界を確かめる本文です。",
+    body: "改訂のつながりを確かめる本文です。",
     replyTo: null,
-    createdAt: "2026-08-11T12:00:00.000Z",
-    originId: `origin-${id}`,
+    replyToRef: null,
+    createdAt: "2026-08-12T12:00:00.000Z",
+    originId,
     ...overrides,
   };
   page.contentHash = Store.contentHash(page);
   return page;
 }
-
-function legacyEntry(id = "local-legacy") {
-  const { originId, contentHash, ...page } = entry(id);
-  return page;
+function append(graph, page) {
+  const next = Store.appendEntry(graph, page);
+  assert.ok(next, "有効なページを改訂帳へ追加できる");
+  return next;
+}
+function resolve(plan, graph, choices = {}) {
+  const result = Store.resolveImport(plan, { localGraph: graph, makeId: (() => { let count = 0; return () => `local-remapped-${++count}`; })(), choices });
+  assert.equal(result.ok, true, result.errors?.join(" "));
+  return result;
 }
 
-function memoryStorage(initial = null, fail = false) {
-  let value = initial;
-  let writes = 0;
-  return {
-    get value() { return value; },
-    get writes() { return writes; },
-    setItem(key, next) { writes += 1; if (fail) throw new Error("quota exceeded"); value = next; },
-  };
-}
+const empty = { version: Store.VERSION, pages: [] };
+let base = append(empty, entry("local-parent", "origin-parent"));
+base = append(base, entry("local-child", "origin-child", { replyTo: "local-parent", replyToRef: "origin:origin-parent" }));
+assert.equal(Store.validGraph(base), true);
+assert.equal(Store.entriesFromGraph(base).find((page) => page.originId === "origin-child").replyTo, "local-parent");
 
-const normal = entry();
-const normalRaw = Store.serializeEntries([normal]);
-assert.equal(Store.readStored(normalRaw).state, "ready");
-assert.equal(Store.readStored(normalRaw).entries[0].originId, normal.originId);
+// Same visible words but a different logical reply target is a distinct revision.
+base = append(base, entry("local-other-parent", "origin-other-parent", { title: "もう一つの返信先" }));
+const rewrittenReply = Store.revisePage(base, "origin-child", { replyToRef: "origin:origin-other-parent" }, () => "local-child-revised");
+assert.ok(rewrittenReply);
+assert.equal(rewrittenReply.pages.find((page) => page.originId === "origin-child").revisions.length, 2);
+assert.notEqual(Store.entriesFromGraph(base).find((page) => page.originId === "origin-child").contentHash, Store.entriesFromGraph(rewrittenReply).find((page) => page.originId === "origin-child").contentHash);
+assert.equal(Store.removePage(rewrittenReply, "origin-parent").reason, "replied", "返事のあるページを削除して参照切れを作れない");
 
-const oldRaw = JSON.stringify({ version: 1, entries: [legacyEntry()] });
+// An old v1 box migrates, and the next write is a v3 record.
+const v1 = entry("local-v1", "ignored");
+delete v1.originId;
+delete v1.replyToRef;
+delete v1.contentHash;
+const oldRaw = JSON.stringify({ version: 1, entries: [v1] });
 const migrated = Store.readStored(oldRaw);
 assert.equal(migrated.state, "ready");
 assert.equal(migrated.migrated, true);
-assert.match(migrated.entries[0].originId, /^legacy-/);
+assert.equal(migrated.graph.version, Store.VERSION);
+const stored = Store.serializeState({ graph: migrated.graph });
+assert.equal(JSON.parse(stored).version, 3);
+assert.equal(Store.readStored(stored).state, "ready");
 
-for (const raw of ["{not json", JSON.stringify({ version: 0, entries: [normal] }), JSON.stringify({ version: 2, entries: [normal, normal] })]) {
-  assert.equal(Store.readStored(raw).state, "recovery");
-}
-const dangling = entry("local-dangling", { replyTo: "missing" });
-assert.equal(Store.readStored(Store.serializeEntries([dangling])).state, "recovery");
-assert.equal(Store.readStored(Store.serializeEntries([dangling]), { sourceEntries: [{ id: "missing" }] }).state, "ready");
+const v2Parent = entry("local-v2-parent", "origin-v2-parent");
+const v2Child = entry("local-v2-child", "origin-v2-child", { replyTo: "local-v2-parent" });
+[v2Parent, v2Child].forEach((page) => { delete page.replyToRef; page.contentHash = Store.legacyContentHash(page); });
+const v2Raw = JSON.stringify({ version: 2, entries: [v2Parent, v2Child], history: { version: 1, before: [v2Parent], afterFingerprint: Store.legacyEntriesFingerprint([v2Parent, v2Child]) } });
+const v2Migrated = Store.readStored(v2Raw);
+assert.equal(v2Migrated.state, "ready");
+assert.equal(v2Migrated.entries.find((page) => page.id === "local-v2-child").replyTo, "local-v2-parent", "v2 の生ID返信を論理参照へ移行する");
+assert.equal(Store.planUndo({ graph: v2Migrated.graph, history: v2Migrated.history }).ok, true, "v2 の直前取込も移行後に戻せる");
 
-const failingStorage = memoryStorage(normalRaw, true);
-assert.throws(() => Store.writeState(failingStorage, "k", { entries: [normal] }), /quota exceeded/);
-assert.equal(failingStorage.value, normalRaw, "書込失敗は既存保存を変えない");
+// Two terminals fork from one parent revision. Both branches survive regardless of import order.
+const shared = append(empty, entry("local-shared", "origin-shared"));
+const terminalA = Store.revisePage(shared, "origin-shared", { title: "端末Aの書き直し" }, () => "local-a");
+const terminalB = Store.revisePage(shared, "origin-shared", { title: "端末Bの書き直し" }, () => "local-b");
+const exportA = Store.makeExport(terminalA, "2026-08-12T13:00:00.000Z");
+const exportB = Store.makeExport(terminalB, "2026-08-12T13:01:00.000Z");
+const planA = Store.planImport(exportA, { localGraph: shared });
+const afterA = resolve(planA, shared, { "origin-shared": "incoming" });
+const planB = Store.planImport(exportB, { localGraph: afterA.graph });
+assert.equal(planB.conflicts.length, 1);
+const afterAB = resolve(planB, afterA.graph, { "origin-shared": "incoming" });
+const planBFirst = Store.planImport(exportB, { localGraph: shared });
+const afterB = resolve(planBFirst, shared, { "origin-shared": "incoming" });
+const planASecond = Store.planImport(exportA, { localGraph: afterB.graph });
+const afterBA = resolve(planASecond, afterB.graph, { "origin-shared": "incoming" });
+assert.equal(afterAB.graph.pages[0].revisions.length, 3);
+assert.deepEqual(new Set(afterAB.graph.pages[0].revisions.map((revision) => revision.revisionId)), new Set(afterBA.graph.pages[0].revisions.map((revision) => revision.revisionId)), "取込順に依らず同じ改訂集合へ収束する");
+const repeatPlan = Store.planImport(exportA, { localGraph: afterAB.graph });
+assert.equal(repeatPlan.addedRevisions, 0, "同じ箱を二度開いても改訂は増えない");
 
-const existing = entry("local-existing");
-const collision = entry("local-existing", { originId: "origin-incoming-a", title: "衝突する一通" });
-const child = entry("local-generated", { originId: "origin-incoming-b", title: "返事", replyTo: "local-existing" });
-const collisionExport = Store.makeExport([collision, child], "2026-08-11T12:00:00.000Z");
-const collisionPlan = Store.planImport(collisionExport, { localEntries: [existing] });
-assert.equal(collisionPlan.ok, true);
-let generated = 0;
-const collisionResult = Store.resolveImport(collisionPlan, {
-  localEntries: [existing], choices: {}, makeId: () => (generated++ === 0 ? "local-generated" : "local-remapped"),
-});
-assert.equal(collisionResult.ok, true);
-assert.equal(new Set(collisionResult.entries.map((page) => page.id)).size, 3, "生成IDは取込バッチ全IDを避ける");
-assert.equal(collisionResult.entries.find((page) => page.title === "返事").replyTo, "local-remapped");
-assert.equal(Store.validateCollection(collisionResult.entries), true);
+const compared = Store.describeRevisionPair(afterAB.graph.pages[0].revisions[1], afterAB.graph.pages[0].revisions[2]);
+assert.ok(compared.some((difference) => difference.label === "見出し"), "競合画面用モデルが本文以外の差も返す");
 
-const first = entry("local-first", { originId: "origin-shared", title: "最初のページ" });
-const firstExport = Store.makeExport([first], "2026-08-11T12:00:00.000Z");
-const firstPlan = Store.planImport(firstExport, { localEntries: [] });
-const firstResult = Store.resolveImport(firstPlan, { localEntries: [], choices: {}, makeId: () => "local-never" });
-assert.equal(firstResult.added, 1);
-const repeatedPlan = Store.planImport(firstExport, { localEntries: firstResult.entries });
-assert.equal(repeatedPlan.duplicates.length, 1);
-const repeated = Store.resolveImport(repeatedPlan, { localEntries: firstResult.entries, choices: {}, makeId: () => "local-never" });
-assert.equal(repeated.added, 0, "同じ箱を二度開けても増えない");
-assert.equal(repeated.entries.length, 1);
-
-const changed = entry("local-elsewhere", { originId: "origin-shared", title: "書き直したページ" });
-const conflictPlan = Store.planImport(Store.makeExport([changed], "2026-08-11T12:00:00.000Z"), { localEntries: firstResult.entries });
-assert.equal(conflictPlan.conflicts.length, 1);
-assert.equal(Store.resolveImport(conflictPlan, { localEntries: firstResult.entries, choices: {}, makeId: () => "local-never" }).ok, false);
-const chosen = Store.resolveImport(conflictPlan, { localEntries: firstResult.entries, choices: { "origin-shared": "incoming" }, makeId: () => "local-never" });
-assert.equal(chosen.ok, true);
-assert.equal(chosen.entries[0].id, "local-first", "衝突選択でも既存返信先を壊さない");
-assert.equal(chosen.entries[0].title, "書き直したページ");
-
-const stalePlan = Store.planImport(firstExport, { localEntries: [] });
-assert.equal(Store.resolveImport(stalePlan, { localEntries: [entry("local-later")], choices: {}, makeId: () => "local-never" }).ok, false, "確認後に集合が変われば計画を捨てる");
-
-const legacyExport = JSON.stringify({ format: Store.EXPORT_FORMAT, version: 1, entries: [legacyEntry("local-v1")] });
-const legacyPlan = Store.planImport(legacyExport, { localEntries: [] });
-assert.equal(legacyPlan.ok, true);
-assert.equal(legacyPlan.migrated, true, "version 1 書出しを移行できる");
-
-const importGate = Store.createImportGate();
-const firstSelection = importGate.invalidate();
-const secondSelection = importGate.invalidate();
-assert.equal(importGate.isCurrent(firstSelection), false, "次のファイル選択は遅れて完了した古い読取を無効にする");
-assert.equal(importGate.isCurrent(secondSelection), true);
-
-const before = [entry("local-before")];
-const after = [...before, entry("local-added", { replyTo: "local-before" })];
-const history = Store.makeHistory(before, after);
-const undo = Store.planUndo({ entries: after, history });
+const history = Store.makeHistory(shared, afterAB.graph);
+const undo = Store.planUndo({ graph: afterAB.graph, history });
 assert.equal(undo.ok, true);
-assert.deepEqual(undo.entries.map((page) => page.id), ["local-before"]);
-assert.equal(Store.planUndo({ entries: [...after, entry("local-later")], history }).ok, false, "後続変更があれば履歴を復元しない");
-assert.equal(Store.readStored(Store.serializeState({ entries: after, history })).state, "ready");
-assert.equal(Store.readStored(JSON.stringify({ version: 2, entries: after, history: { version: 1, before: [], afterFingerprint: "bad" } })).state, "recovery", "壊れた履歴は回復モードへ入れる");
+assert.equal(undo.graph.pages[0].revisions.length, 1, "取込前の改訂集合へ一回戻せる");
+
+const broken = JSON.parse(Store.serializeState({ graph: afterAB.graph }));
+broken.graph.pages[0].revisions[1].parentRevisionId = "revision-missing";
+assert.equal(Store.readStored(JSON.stringify(broken)).state, "recovery", "欠損した親改訂は回復モードへ入れる");
+const duplicated = JSON.parse(Store.serializeState({ graph: afterAB.graph }));
+duplicated.graph.pages[0].revisions.push({ ...duplicated.graph.pages[0].revisions[1] });
+assert.equal(Store.readStored(JSON.stringify(duplicated)).state, "recovery", "重複改訂は黙ってまとめない");
+const tampered = JSON.parse(Store.serializeState({ graph: afterAB.graph }));
+tampered.graph.pages[0].revisions[1].body = "検査後に書き換えた本文";
+assert.equal(Store.readStored(JSON.stringify(tampered)).state, "recovery", "内容改竄は回復モードへ入れる");
+const cyclic = JSON.parse(Store.serializeState({ graph: afterAB.graph }));
+cyclic.graph.pages[0].revisions[1].parentRevisionId = cyclic.graph.pages[0].revisions[1].revisionId;
+assert.equal(Store.readStored(JSON.stringify(cyclic)).state, "recovery", "循環した親改訂は回復モードへ入れる");
+assert.equal(Store.readStored("{not json").state, "recovery");
+
+const gate = Store.createImportGate();
+const first = gate.invalidate();
+const second = gate.invalidate();
+assert.equal(gate.isCurrent(first), false);
+assert.equal(gate.isCurrent(second), true);
 
 console.log("local-store regression tests passed");

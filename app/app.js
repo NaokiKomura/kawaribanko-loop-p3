@@ -39,6 +39,7 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 let diary;
 let selectedAuthor = "all";
 let localEntries = [];
+let localGraph = { version: window.DiaryStore.VERSION, pages: [] };
 let storageNotice = "";
 let draftForPreview = null;
 let storageRecovery = null;
@@ -110,6 +111,7 @@ function loadLocalEntries() {
       return [];
     }
     localHistory = result.history;
+    localGraph = result.graph;
     return result.entries.map((entry) => ({ ...entry, isLocal: true }));
   } catch (error) {
     console.warn("Could not read local diary entries", error);
@@ -119,9 +121,10 @@ function loadLocalEntries() {
   }
 }
 
-function commitLocalEntries(entries, history = null) {
-  window.DiaryStore.writeState(window.localStorage, LOCAL_STORAGE_KEY, { entries, history });
+function commitLocalEntries(entries, history = null, graph = localGraph) {
+  window.DiaryStore.writeState(window.localStorage, LOCAL_STORAGE_KEY, { entries, graph, history, sourceEntries: diary.entries });
   localEntries = entries;
+  localGraph = graph;
   localHistory = history;
   updateUndoControl();
 }
@@ -254,6 +257,28 @@ function createEntry(entry, options = {}) {
     deleteButton.textContent = "この追記を削除する";
     actions.append(deleteButton);
     card.append(actions);
+  }
+  if (entry.isLocal) {
+    const page = localGraph.pages.find((item) => item.originId === entry.originId);
+    if (page?.revisions.length > 1) {
+      const history = document.createElement("div");
+      history.className = "revision-history";
+      const label = document.createElement("p");
+      label.textContent = `このページには ${page.revisions.length} つの改訂があります。`;
+      history.append(label);
+      page.revisions.forEach((revision, index) => {
+        const button = document.createElement("button");
+        button.className = "revision-link";
+        button.type = "button";
+        button.dataset.action = "select-revision";
+        button.dataset.originId = entry.originId;
+        button.dataset.revisionId = revision.revisionId;
+        button.disabled = revision.revisionId === page.selectedRevisionId;
+        button.textContent = revision.revisionId === page.selectedRevisionId ? `表示中の版 ${index + 1}` : `版 ${index + 1} を読む`;
+        history.append(button);
+      });
+      card.append(history);
+    }
   }
   return card;
 }
@@ -390,6 +415,8 @@ function draftFromForm() {
     originId: makeOriginId(),
     isLocal: true,
   };
+  const replyTarget = allEntries().find((entry) => entry.id === draft.replyTo);
+  draft.replyToRef = replyTarget ? (replyTarget.isLocal ? `origin:${replyTarget.originId}` : `source:${replyTarget.id}`) : null;
   draft.contentHash = window.DiaryStore.contentHash(draft);
   return draft;
 }
@@ -410,7 +437,9 @@ function saveDraft() {
     return;
   }
   try {
-    commitLocalEntries([...localEntries, draftForPreview]);
+    const nextGraph = window.DiaryStore.appendEntry(localGraph, draftForPreview, diary.entries);
+    if (!nextGraph) throw new Error("Could not append diary revision");
+    commitLocalEntries(window.DiaryStore.entriesFromGraph(nextGraph, diary.entries), null, nextGraph);
   } catch (error) {
     console.error("Could not save local diary entry", error);
     composerStatus.textContent = "この端末に保存できませんでした。ブラウザの保存領域を確認して、もう一度試してください。";
@@ -431,10 +460,15 @@ function saveDraft() {
 function deleteLocalEntry(id) {
   const entry = localEntries.find((item) => item.id === id);
   if (!entry) return;
+  const removal = window.DiaryStore.removePage(localGraph, entry.originId, diary.entries);
+  if (!removal.ok && removal.reason === "replied") {
+    composerStatus.textContent = "このページには返事があるため削除できません。先に返事を削除してください。";
+    return;
+  }
+  if (!removal.ok) return;
   if (!window.confirm(`「${entry.title}」をこの端末から削除しますか？ 正本の日記は変更されません。`)) return;
-  const remaining = localEntries.filter((item) => item.id !== id);
   try {
-    commitLocalEntries(remaining);
+    commitLocalEntries(removal.entries, null, removal.graph);
   } catch (error) {
     console.error("Could not delete local diary entry", error);
     composerStatus.textContent = "削除できませんでした。ブラウザの保存領域を確認して、もう一度試してください。";
@@ -458,7 +492,7 @@ function downloadText(text, filename) {
 
 function exportEntries() {
   const stamp = new Date().toISOString();
-  downloadText(window.DiaryStore.makeExport(localEntries, stamp), `kawaribanko-${stamp.slice(0, 10)}.json`);
+  downloadText(window.DiaryStore.makeExport(localGraph, stamp, diary.entries), `kawaribanko-${stamp.slice(0, 10)}.json`);
   transferStatus.textContent = `この端末の追記 ${localEntries.length} 通を書き出しました。`;
 }
 
@@ -477,6 +511,7 @@ async function inspectImportFile() {
   const plan = window.DiaryStore.planImport(text, {
     sourceEntries: diary.entries,
     localEntries,
+    localGraph,
   });
   if (!plan.ok) {
     transferStatus.textContent = plan.errors.join(" ");
@@ -498,17 +533,23 @@ function clearPendingImport() {
 
 function renderImportPlan(plan) {
   const parts = [];
-  if (plan.newEntries.length) parts.push(`新規 ${plan.newEntries.length} 通`);
-  if (plan.duplicates.length) parts.push(`同じ内容なので追加しない ${plan.duplicates.length} 通`);
-  if (plan.conflicts.length) parts.push(`同じ由来で内容が違う ${plan.conflicts.length} 通`);
+  if (plan.addedRevisions) parts.push(`新しい改訂 ${plan.addedRevisions} 通`);
+  if (plan.conflicts.length) parts.push(`表示中の版が異なる ${plan.conflicts.length} ページ`);
   importSummary.textContent = `${parts.join("、")}です。保存するまでこの端末の記録は変わりません。`;
   importConflicts.replaceChildren(...plan.conflicts.map(({ incoming, existing }, index) => {
     const fieldset = document.createElement("fieldset");
     fieldset.className = "import-conflict";
     const legend = document.createElement("legend");
     legend.textContent = `内容が分かれたページ ${index + 1}`;
-    const detail = document.createElement("p");
-    detail.textContent = `この端末：${existing.title} ／ 引っ越し元：${incoming.title}`;
+    const detail = document.createElement("div");
+    detail.className = "conflict-differences";
+    const intro = document.createElement("p");
+    intro.textContent = "この端末と引っ越し元で、次の内容が違います。";
+    detail.append(intro, ...window.DiaryStore.describeRevisionPair(existing, incoming).map((difference) => {
+      const row = document.createElement("p");
+      row.textContent = `${difference.label}：この端末「${difference.existing}」／引っ越し元「${difference.incoming}」`;
+      return row;
+    }));
     const choices = document.createElement("div");
     choices.className = "conflict-choices";
     [["keep", "この端末のページを残す"], ["incoming", "引っ越し元のページで置き換える"]].forEach(([value, labelText]) => {
@@ -537,6 +578,7 @@ function commitImport() {
   const resolved = window.DiaryStore.resolveImport(pendingImport, {
     sourceEntries: diary.entries,
     localEntries,
+    localGraph,
     makeId: makeUnusedLocalId,
     choices,
   });
@@ -551,7 +593,7 @@ function commitImport() {
     return;
   }
   try {
-    commitLocalEntries(resolved.entries, window.DiaryStore.makeHistory(localEntries, resolved.entries));
+    commitLocalEntries(resolved.entries, window.DiaryStore.makeHistory(localGraph, resolved.graph), resolved.graph);
   } catch (error) {
     console.error("Could not import local diary entries", error);
     transferStatus.textContent = "取り込めませんでした。既存の記録は変更していません。";
@@ -561,17 +603,17 @@ function commitImport() {
   clearPendingImport();
   populateReplyOptions();
   renderEntries();
-  transferStatus.textContent = `新規 ${added} 通を取り込みました${duplicates ? `。同じ内容 ${duplicates} 通は増やしていません` : ""}${replaced ? `。内容が分かれた ${replaced} 通は選んだページに置き換えました` : ""}${migrated ? "。version 1 の箱は今回の保存で移行されます" : ""}。直前の取込は取り消せます。`;
+  transferStatus.textContent = `新しい改訂 ${added} 通を取り込みました${replaced ? `。表示する版を ${replaced} ページで選びました` : ""}${migrated ? "。古い箱は今回の保存で移行されます" : ""}。選ばなかった版も改訂史に残り、直前の取込は取り消せます。`;
 }
 
 function undoLastImport() {
-  const undo = window.DiaryStore.planUndo({ entries: localEntries, history: localHistory, sourceEntries: diary.entries });
+  const undo = window.DiaryStore.planUndo({ graph: localGraph, entries: localEntries, history: localHistory, sourceEntries: diary.entries });
   if (!undo.ok) {
     transferStatus.textContent = undo.errors.join(" ");
     return;
   }
   try {
-    commitLocalEntries(undo.entries, null);
+    commitLocalEntries(undo.entries, null, undo.graph);
   } catch (error) {
     console.error("Could not undo local diary import", error);
     transferStatus.textContent = "取り消しを書き込めませんでした。現在の記録は変更していません。";
@@ -591,7 +633,7 @@ function exportRecoveryRaw() {
 function discardProtectedRecovery() {
   if (!storageRecovery || !window.confirm("読めない以前の追記をこの端末から破棄しますか？ この操作は元に戻せません。")) return;
   try {
-    commitLocalEntries([]);
+    commitLocalEntries([], null, { version: window.DiaryStore.VERSION, pages: [] });
   } catch (error) {
     console.error("Could not discard protected local diary entries", error);
     transferStatus.textContent = "破棄できませんでした。元の内容はこの端末に残っています。";
@@ -653,6 +695,23 @@ entryList.addEventListener("click", (event) => {
   const button = event.target.closest('[data-action="delete-local-entry"]');
   if (button) {
     deleteLocalEntry(button.dataset.entryId);
+    return;
+  }
+  const revision = event.target.closest('[data-action="select-revision"]');
+  if (revision) {
+    const nextGraph = window.DiaryStore.selectRevision(localGraph, revision.dataset.originId, revision.dataset.revisionId, diary.entries);
+    if (!nextGraph) return;
+    try {
+      commitLocalEntries(window.DiaryStore.entriesFromGraph(nextGraph, diary.entries), null, nextGraph);
+    } catch (error) {
+      console.error("Could not select diary revision", error);
+      composerStatus.textContent = "表示する版を保存できませんでした。現在の表示は変更していません。";
+      return;
+    }
+    clearPendingImport();
+    populateReplyOptions();
+    renderEntries();
+    composerStatus.textContent = "別の改訂を表示しています。ほかの版は消えていません。";
     return;
   }
   const navigation = event.target.closest('[data-action="navigate-entry"]');
