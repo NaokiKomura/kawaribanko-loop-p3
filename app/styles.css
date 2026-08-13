@@ -101,6 +101,9 @@ h1 { margin: .38rem 0 .35rem; font-size: clamp(2.1rem, 7vw, 3.4rem); letter-spac
 .preview { margin-top: 1.25rem; padding: 1.15rem; border: 1px dashed #bda8c4; border-radius: 12px; background: #fffdff; }
 .preview h3 { margin: .25rem 0 0; font-size: 1rem; }
 .preview .entry-card { margin-top: .85rem; }
+.revision-preview-context { margin-top: .9rem; padding: .75rem .85rem; border-left: 3px solid #8a6099; border-radius: 0 8px 8px 0; background: #f8f1fa; color: #62416d; font-size: .82rem; line-height: 1.65; }
+.revision-preview-context p { margin: 0; }
+.revision-preview-context p + p { margin-top: .35rem; }
 .composer-status { min-height: 1.4em; margin: 1rem 0 0; color: var(--muted); font-size: .84rem; line-height: 1.6; }
 .transfer { margin-bottom: 1.35rem; border-color: #cddce8; background: #fbfdff; }
 .transfer h3 { margin: 0; font-size: 1rem; }
@@ -198,6 +201,7 @@ h2 { margin: .25rem 0 0; font-size: 1.4rem; }
 .revision-history p { width: 100%; margin: 0; color: #395a73; font-size: .76rem; }
 .revision-link { min-height: 31px; border: 1px solid #b8cddd; border-radius: 7px; padding: .3rem .55rem; color: #395a73; background: white; cursor: pointer; font: inherit; font-size: .76rem; font-weight: 800; }
 .revision-link:disabled { color: var(--muted); border-color: var(--line); background: #f3f1ed; cursor: default; }
+.revision-edit { margin-top: .7rem; }
 
 .empty-state, .error-state { margin: 1rem 0 0 18px; padding: 1rem; border-radius: 10px; background: #fff9f2; color: var(--muted); line-height: 1.7; }
 .error-state { border: 1px solid #efc2b8; color: #9d3c2b; }

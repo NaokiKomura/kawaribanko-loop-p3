@@ -201,8 +201,34 @@
     return { ok: true, graph, migrated: record.version !== VERSION };
   }
   function selectedRevision(page) { return page.revisions.find((item) => item.revisionId === page.selectedRevisionId); }
-  function revisionEquivalent(left, right) { return stableStringify({ ...left, id: undefined }) === stableStringify({ ...right, id: undefined }); }
-  function uniqueId(usedIds, makeId) { let id = makeId(); while (usedIds.has(id)) id = makeId(); usedIds.add(id); return id; }
+  // replyTo is a display-time projection of replyToRef.  Old v3 exports can
+  // contain it, but it must never make two otherwise identical revisions look
+  // different just because another terminal assigned a different local id.
+  function revisionEquivalent(left, right) {
+    const comparable = (revision) => {
+      const { id, replyTo, ...rest } = revision;
+      return rest;
+    };
+    return stableStringify(comparable(left)) === stableStringify(comparable(right));
+  }
+  function uniqueId(usedIds, makeId) {
+    const candidate = typeof makeId === "function" ? makeId() : null;
+    if (isNonEmptyString(candidate) && !usedIds.has(candidate)) {
+      usedIds.add(candidate);
+      return candidate;
+    }
+    // A preview cannot rely on a caller's random-id generator: a repeated
+    // placeholder used to make a second collision loop forever.  This
+    // fallback finds a free id in at most usedIds.size + 1 checks.
+    let suffix = 1;
+    let fallback = `local-import-remapped-${usedIds.size + suffix}`;
+    while (usedIds.has(fallback)) {
+      suffix += 1;
+      fallback = `local-import-remapped-${usedIds.size + suffix}`;
+    }
+    usedIds.add(fallback);
+    return fallback;
+  }
   function mergeGraph(localGraph, incomingGraph, sourceEntries, makeId) {
     const result = cloneGraph(localGraph);
     const localByOrigin = new Map(result.pages.map((page) => [page.originId, page]));
@@ -235,7 +261,8 @@
     const imported = readImport(text, sourceEntries);
     if (!imported.ok) return imported;
     let merged;
-    try { merged = mergeGraph(graph, imported.graph, sourceEntries, () => "local-import-placeholder"); } catch (error) { return { ok: false, errors: ["同じ改訂IDの内容が食い違います。改竄の可能性があるため取り込みません。"] }; }
+    let previewId = 0;
+    try { merged = mergeGraph(graph, imported.graph, sourceEntries, () => `local-import-preview-${++previewId}`); } catch (error) { return { ok: false, errors: ["同じ改訂IDの内容が食い違います。改竄の可能性があるため取り込みません。"] }; }
     return { ok: true, graph, incomingGraph: imported.graph, conflicts: merged.conflicts, addedRevisions: merged.addedRevisions, migrated: imported.migrated, baseFingerprint: graphFingerprint(graph), sourceFingerprint: hashText(stableStringify([...sourceIdSet(sourceEntries)].sort())) };
   }
   function resolveImport(plan, { sourceEntries = [], localEntries = [], localGraph, makeId, choices = {} }) {
@@ -282,11 +309,13 @@
     page.selectedRevisionId = revisionId;
     return validGraph(next, sourceEntries) ? next : null;
   }
-  function revisePage(graph, originId, changes, makeId, sourceEntries = []) {
+  function revisePage(graph, originId, changes, makeId, sourceEntries = [], parentRevisionId) {
     if (!graph || !validGraph(graph, sourceEntries)) return null;
     const next = cloneGraph(graph);
     const page = next.pages.find((item) => item.originId === originId);
-    const parent = page && selectedRevision(page);
+    const parent = page && (parentRevisionId
+      ? page.revisions.find((revision) => revision.revisionId === parentRevisionId)
+      : selectedRevision(page));
     if (!parent || typeof makeId !== "function") return null;
     const revision = { ...storedEntry(parent), ...changes, originId, id: makeId(), parentRevisionId: parent.revisionId };
     revision.contentHash = contentHash(revision);

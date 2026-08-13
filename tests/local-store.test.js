@@ -88,6 +88,60 @@ assert.deepEqual(new Set(afterAB.graph.pages[0].revisions.map((revision) => revi
 const repeatPlan = Store.planImport(exportA, { localGraph: afterAB.graph });
 assert.equal(repeatPlan.addedRevisions, 0, "同じ箱を二度開いても改訂は増えない");
 
+// replyTo is only a terminal-specific projection.  Two exports that use
+// different raw ids but the same replyToRef must converge as one revision.
+const replyTarget = append(empty, entry("local-target-a", "origin-target"));
+const replyGraph = append(replyTarget, entry("local-reply-a", "origin-reply", {
+  replyTo: "local-target-a",
+  replyToRef: "origin:origin-target",
+}));
+const replyFromOtherTerminal = JSON.parse(JSON.stringify(replyGraph));
+replyFromOtherTerminal.pages[0].revisions[0].id = "local-target-b";
+replyFromOtherTerminal.pages[1].revisions[0].id = "local-reply-b";
+replyFromOtherTerminal.pages[1].revisions[0].replyTo = "local-target-b";
+assert.equal(Store.validGraph(replyFromOtherTerminal), true);
+const sameReplyPlan = Store.planImport(Store.makeExport(replyFromOtherTerminal, "2026-08-12T13:05:00.000Z"), { localGraph: replyGraph });
+assert.equal(sameReplyPlan.ok, true, sameReplyPlan.errors?.join(" "));
+assert.equal(sameReplyPlan.addedRevisions, 0, "同じ論理返信先なら端末ごとの生ID差で重複しない");
+const otherReplyTarget = append(replyGraph, entry("local-other-target", "origin-other-target"));
+const differentLogicalReply = Store.revisePage(otherReplyTarget, "origin-reply", { replyToRef: "origin:origin-other-target" }, () => "local-reply-other-target");
+const differentReplyPlan = Store.planImport(Store.makeExport(differentLogicalReply, "2026-08-12T13:05:30.000Z"), { localGraph: otherReplyTarget });
+assert.equal(differentReplyPlan.ok, true, differentReplyPlan.errors?.join(" "));
+assert.equal(differentReplyPlan.addedRevisions, 1, "論理返信先が違う改訂は別の枝として取り込む");
+
+// Preview and confirmation must finish even when several imported pages clash
+// with existing ids and an id generator itself keeps returning a collision.
+let collisionBase = append(empty, entry("local-clash-a", "origin-existing-a"));
+collisionBase = append(collisionBase, entry("local-clash-b", "origin-existing-b"));
+let collisionIncoming = append(empty, entry("local-clash-a", "origin-incoming-a"));
+collisionIncoming = append(collisionIncoming, entry("local-clash-b", "origin-incoming-b"));
+const collisionPlan = Store.planImport(Store.makeExport(collisionIncoming, "2026-08-12T13:06:00.000Z"), { localGraph: collisionBase });
+assert.equal(collisionPlan.ok, true, collisionPlan.errors?.join(" "));
+assert.equal(collisionPlan.addedRevisions, 2, "複数の生ID衝突もプレビューで停止しない");
+const collisionResolved = Store.resolveImport(collisionPlan, {
+  localGraph: collisionBase,
+  makeId: () => "local-clash-a",
+});
+assert.equal(collisionResolved.ok, true, collisionResolved.errors?.join(" "));
+assert.equal(Store.validGraph(collisionResolved.graph), true, "再採番後も全生IDと改訂連鎖を保存前に検証する");
+assert.equal(new Set(collisionResolved.graph.pages.flatMap((page) => page.revisions.map((revision) => revision.id))).size, 4);
+
+const stalePlan = Store.planImport(exportA, { localGraph: shared });
+const changedBeforeConfirmation = append(shared, entry("local-later", "origin-later"));
+const staleResolution = Store.resolveImport(stalePlan, { localGraph: changedBeforeConfirmation, makeId: () => "local-never-used" });
+assert.equal(staleResolution.ok, false, "確認後に集合が変われば保存せず計画を破棄する");
+
+const explicitParent = afterAB.graph.pages[0].revisions[1];
+const childOfExplicitParent = Store.revisePage(afterAB.graph, "origin-shared", { title: "選んだ親から書き直す" }, () => "local-explicit-child", [], explicitParent.revisionId);
+assert.ok(childOfExplicitParent, "表示中でない任意の改訂を親に子改訂を作れる");
+const explicitChild = childOfExplicitParent.pages[0].revisions.find((revision) => revision.id === "local-explicit-child");
+assert.equal(explicitChild.parentRevisionId, explicitParent.revisionId);
+
+const protectedRaw = "before-write";
+const throwingStorage = { getItem: () => protectedRaw, setItem: () => { throw new Error("quota"); } };
+assert.throws(() => Store.writeState(throwingStorage, "diary", { graph: shared }));
+assert.equal(throwingStorage.getItem("diary"), protectedRaw, "書込例外でも既存の保存を置き換えない");
+
 const compared = Store.describeRevisionPair(afterAB.graph.pages[0].revisions[1], afterAB.graph.pages[0].revisions[2]);
 assert.ok(compared.some((difference) => difference.label === "見出し"), "競合画面用モデルが本文以外の差も返す");
 
