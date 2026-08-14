@@ -137,6 +137,24 @@ assert.ok(childOfExplicitParent, "表示中でない任意の改訂を親に子�
 const explicitChild = childOfExplicitParent.pages[0].revisions.find((revision) => revision.id === "local-explicit-child");
 assert.equal(explicitChild.parentRevisionId, explicitParent.revisionId);
 
+// A causal reader is a pure projection: storage/import order cannot change
+// the root, depth, sibling order, edge diff, or selected marker it shows.
+const causalRows = Store.causalView(childOfExplicitParent, "origin-shared");
+assert.equal(causalRows.length, 4);
+assert.ok(causalRows.some((row) => row.depth === 2), "multiple levels retain their parent depth");
+assert.ok(causalRows.some((row) => row.depth === 1 && row.siblingIndex === 1), "sibling branches receive stable positions");
+assert.ok(causalRows.some((row) => row.changes.some((difference) => difference.label === "見出し")), "every child exposes its edge difference");
+const reorderedGraph = JSON.parse(JSON.stringify(childOfExplicitParent));
+reorderedGraph.pages[0].revisions.reverse();
+const causalRowsFromReverseImport = Store.causalView(reorderedGraph, "origin-shared");
+assert.deepEqual(
+  causalRowsFromReverseImport.map((row) => [row.revision.revisionId, row.depth, row.siblingIndex, row.selected, row.changes]),
+  causalRows.map((row) => [row.revision.revisionId, row.depth, row.siblingIndex, row.selected, row.changes]),
+  "reverse import order produces the same causal reading order",
+);
+const unchanged = Store.revisePage(shared, "origin-shared", { title: "テストの一通", body: "改訂のつながりを確かめる本文です。", mood: "🖊️", replyToRef: null }, () => "local-no-change");
+assert.equal(unchanged, null, "the same comparison used by the preview rejects an unchanged child revision");
+
 const protectedRaw = "before-write";
 const throwingStorage = { getItem: () => protectedRaw, setItem: () => { throw new Error("quota"); } };
 assert.throws(() => Store.writeState(throwingStorage, "diary", { graph: shared }));

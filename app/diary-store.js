@@ -290,6 +290,43 @@
     const fields = [["見出し", existing.title, incoming.title], ["本文", existing.body, incoming.body], ["日付", existing.date, incoming.date], ["気分", existing.mood, incoming.mood], ["返信先", existing.replyToRef ?? "なし", incoming.replyToRef ?? "なし"]];
     return fields.filter(([, left, right]) => left !== right).map(([label, left, right]) => ({ label, existing: left, incoming: right }));
   }
+  // This is deliberately derived only from the graph.  Import order and the
+  // order in which revisions happen to be stored must not decide how a branch
+  // is read on screen.
+  function causalView(graph, originId, sourceEntries = []) {
+    if (!graph || !validGraph(graph, sourceEntries)) return [];
+    const page = graph.pages.find((item) => item.originId === originId);
+    if (!page) return [];
+    const byParent = new Map();
+    page.revisions.forEach((revision) => {
+      const key = revision.parentRevisionId ?? "";
+      if (!byParent.has(key)) byParent.set(key, []);
+      byParent.get(key).push(revision);
+    });
+    byParent.forEach((siblings) => siblings.sort((left, right) => left.revisionId.localeCompare(right.revisionId)));
+    const rows = [];
+    const visit = (parentRevisionId, depth) => {
+      (byParent.get(parentRevisionId ?? "") || []).forEach((revision, siblingIndex) => {
+        const parent = revision.parentRevisionId
+          ? page.revisions.find((item) => item.revisionId === revision.parentRevisionId)
+          : null;
+        rows.push({
+          revision,
+          parentRevisionId: revision.parentRevisionId,
+          depth,
+          siblingIndex,
+          selected: revision.revisionId === page.selectedRevisionId,
+          changes: parent ? describeRevisionPair(parent, revision) : [],
+        });
+        visit(revision.revisionId, depth + 1);
+      });
+    };
+    visit(null, 0);
+    return rows;
+  }
+  function hasRevisionChanges(parent, changes) {
+    return Boolean(parent) && describeRevisionPair(parent, { ...parent, ...changes }).length > 0;
+  }
   function appendEntry(graph, entry, sourceEntries = []) {
     if (!graph || !validGraph(graph, sourceEntries) || !isValidBaseEntry(entry) || !isNonEmptyString(entry.originId)
       || !isReplyRef(entry.replyToRef) || graph.pages.some((page) => page.originId === entry.originId)
@@ -317,6 +354,7 @@
       ? page.revisions.find((revision) => revision.revisionId === parentRevisionId)
       : selectedRevision(page));
     if (!parent || typeof makeId !== "function") return null;
+    if (!hasRevisionChanges(parent, changes)) return null;
     const revision = { ...storedEntry(parent), ...changes, originId, id: makeId(), parentRevisionId: parent.revisionId };
     revision.contentHash = contentHash(revision);
     revision.revisionId = revisionIdFor(revision, revision.parentRevisionId);
@@ -335,7 +373,7 @@
     return { ok: true, graph: next, entries: entriesFromGraph(next, sourceEntries) };
   }
   function createImportGate() { let generation = 0; return { invalidate() { generation += 1; return generation; }, isCurrent(token) { return token === generation; } }; }
-  const api = { VERSION, LEGACY_VERSION, PREVIOUS_VERSION, HISTORY_VERSION, EXPORT_FORMAT, contentHash, legacyContentHash, legacyEntriesFingerprint, entriesFingerprint: (entries) => graphFingerprint(graphForWrite({ entries })), graphFingerprint, isValidLocalEntry: (entry) => Boolean(graphFromEntries([entry], PREVIOUS_VERSION)), validateCollection: (entries, sourceEntries) => Boolean(graphFromEntries(entries, PREVIOUS_VERSION, sourceEntries)), readStored, serializeEntries, serializeState, writeEntries, writeState, makeExport, planImport, resolveImport, makeHistory, planUndo, describeRevisionPair, appendEntry, selectRevision, revisePage, removePage, createImportGate, entriesFromGraph, validGraph };
+  const api = { VERSION, LEGACY_VERSION, PREVIOUS_VERSION, HISTORY_VERSION, EXPORT_FORMAT, contentHash, legacyContentHash, legacyEntriesFingerprint, entriesFingerprint: (entries) => graphFingerprint(graphForWrite({ entries })), graphFingerprint, isValidLocalEntry: (entry) => Boolean(graphFromEntries([entry], PREVIOUS_VERSION)), validateCollection: (entries, sourceEntries) => Boolean(graphFromEntries(entries, PREVIOUS_VERSION, sourceEntries)), readStored, serializeEntries, serializeState, writeEntries, writeState, makeExport, planImport, resolveImport, makeHistory, planUndo, describeRevisionPair, causalView, hasRevisionChanges, appendEntry, selectRevision, revisePage, removePage, createImportGate, entriesFromGraph, validGraph };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.DiaryStore = api;
 })(typeof window !== "undefined" ? window : globalThis);

@@ -101,6 +101,8 @@ h1 { margin: .38rem 0 .35rem; font-size: clamp(2.1rem, 7vw, 3.4rem); letter-spac
 .preview { margin-top: 1.25rem; padding: 1.15rem; border: 1px dashed #bda8c4; border-radius: 12px; background: #fffdff; }
 .preview h3 { margin: .25rem 0 0; font-size: 1rem; }
 .preview .entry-card { margin-top: .85rem; }
+.revision-mode { display: flex; align-items: center; justify-content: space-between; gap: .8rem; margin: .95rem 0; padding: .7rem .8rem; border: 1px solid #c9a7d0; border-radius: 9px; background: #faf2fc; color: #62416d; font-size: .84rem; line-height: 1.55; }
+.revision-mode p { margin: 0; }
 .revision-preview-context { margin-top: .9rem; padding: .75rem .85rem; border-left: 3px solid #8a6099; border-radius: 0 8px 8px 0; background: #f8f1fa; color: #62416d; font-size: .82rem; line-height: 1.65; }
 .revision-preview-context p { margin: 0; }
 .revision-preview-context p + p { margin-top: .35rem; }
@@ -197,8 +199,11 @@ h2 { margin: .25rem 0 0; font-size: 1.4rem; }
 .entry-actions { margin-top: .9rem; }
 .delete-entry { min-height: 34px; border-color: #d9a99f; color: #9d3c2b; background: #fff8f5; font-size: .78rem; }
 .delete-entry:hover { background: #fff0eb; }
-.revision-history { display: flex; flex-wrap: wrap; align-items: center; gap: .45rem; margin-top: .85rem; padding: .65rem .75rem; border: 1px dashed #b8cddd; border-radius: 8px; background: #f8fcff; }
+.revision-history { display: grid; gap: .55rem; margin-top: .85rem; padding: .65rem .75rem; border: 1px dashed #b8cddd; border-radius: 8px; background: #f8fcff; }
 .revision-history p { width: 100%; margin: 0; color: #395a73; font-size: .76rem; }
+.revision-branch { margin-left: calc(var(--revision-depth) * .9rem); padding-left: .65rem; border-left: 2px solid #c9d9e6; }
+.revision-branch + .revision-branch { margin-top: .15rem; }
+.revision-context { margin-top: .28rem !important; line-height: 1.55; overflow-wrap: anywhere; }
 .revision-link { min-height: 31px; border: 1px solid #b8cddd; border-radius: 7px; padding: .3rem .55rem; color: #395a73; background: white; cursor: pointer; font: inherit; font-size: .76rem; font-weight: 800; }
 .revision-link:disabled { color: var(--muted); border-color: var(--line); background: #f3f1ed; cursor: default; }
 .revision-edit { margin-top: .7rem; }
@@ -217,6 +222,7 @@ footer { padding: 1.75rem .8rem 0; color: var(--muted); text-align: center; font
   .member-filter, .filter-message, .empty-state, .error-state { margin-left: 12px; }
   .notebook-heading { align-items: start; flex-direction: column; gap: .45rem; }
   .section-heading, .preview-heading { align-items: start; flex-direction: column; gap: .55rem; }
+  .revision-mode { align-items: start; flex-direction: column; }
   .form-grid { grid-template-columns: 1fr; }
   .form-actions { justify-content: stretch; }
   .form-actions .button { flex: 1 1 auto; }

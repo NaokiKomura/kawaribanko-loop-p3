@@ -16,6 +16,9 @@ const formErrors = document.querySelector("#form-errors");
 const preview = document.querySelector("#preview");
 const previewEntry = document.querySelector("#preview-entry");
 const revisionPreviewContext = document.querySelector("#revision-preview-context");
+const revisionMode = document.querySelector("#revision-mode");
+const revisionModeMessage = document.querySelector("#revision-mode-message");
+const cancelRevision = document.querySelector("#cancel-revision");
 const previewButton = document.querySelector("#preview-button");
 const editButton = document.querySelector("#edit-button");
 const saveButton = document.querySelector("#save-button");
@@ -276,26 +279,51 @@ function createEntry(entry, options = {}) {
       card.append(revise);
     }
     if (page?.revisions.length > 1) {
-      const history = document.createElement("div");
+      const history = document.createElement("section");
       history.className = "revision-history";
+      history.setAttribute("aria-label", "このページの改訂の因果");
       const label = document.createElement("p");
-      label.textContent = `このページには ${page.revisions.length} つの改訂があります。`;
+      label.textContent = `改訂帳：${page.revisions.length} つの版を親子と枝で読めます。`;
       history.append(label);
-      page.revisions.forEach((revision, index) => {
+      window.DiaryStore.causalView(localGraph, entry.originId, diary.entries).forEach((row, index) => {
+        const branch = document.createElement("div");
+        branch.className = "revision-branch";
+        branch.style.setProperty("--revision-depth", row.depth);
         const button = document.createElement("button");
         button.className = "revision-link";
         button.type = "button";
         button.dataset.action = "select-revision";
         button.dataset.originId = entry.originId;
-        button.dataset.revisionId = revision.revisionId;
-        button.disabled = revision.revisionId === page.selectedRevisionId;
-        button.textContent = revision.revisionId === page.selectedRevisionId ? `表示中の版 ${index + 1}` : `版 ${index + 1} を読む`;
-        history.append(button);
+        button.dataset.revisionId = row.revision.revisionId;
+        button.disabled = row.selected;
+        const branchMark = row.depth === 0 ? "起点" : `枝 ${row.depth}-${row.siblingIndex + 1}`;
+        button.textContent = row.selected ? `${branchMark}：表示中の版` : `${branchMark}：版 ${index + 1} を読む`;
+        branch.append(button);
+        const context = document.createElement("p");
+        context.className = "revision-context";
+        if (row.parentRevisionId === null) context.textContent = `起点。返信先：${replyReferenceLabel(row.revision.replyToRef)}`;
+        else {
+          const differences = row.changes.map((difference) => `${difference.label}「${difference.existing}」→「${difference.incoming}」`);
+          context.textContent = `親から：${differences.join("／")}。返信先：${replyReferenceLabel(row.revision.replyToRef)}`;
+        }
+        branch.append(context);
+        history.append(branch);
       });
       card.append(history);
     }
   }
   return card;
+}
+
+function replyReferenceLabel(replyToRef) {
+  if (!replyToRef) return "なし";
+  if (replyToRef.startsWith("source:")) {
+    const entry = diary.entries.find((item) => item.id === replyToRef.slice(7));
+    return entry ? `正本の「${entry.title}」` : "正本のページ";
+  }
+  const target = localGraph.pages.find((page) => `origin:${page.originId}` === replyToRef);
+  const selected = target?.revisions.find((revision) => revision.revisionId === target.selectedRevisionId);
+  return selected ? `この端末の「${selected.title}」` : "この端末のページ";
 }
 
 function createNavigationButton(label, targetId) {
@@ -424,7 +452,7 @@ function draftFromForm() {
   const draft = {
     id: makeUnusedLocalId(),
     author: "local",
-    date: today(),
+    date: revisionForEditing()?.date ?? today(),
     mood: moodInput.value,
     title,
     body,
@@ -450,6 +478,7 @@ function showRevisionPreviewContext(draft) {
   if (!parent) {
     revisionPreviewContext.hidden = true;
     revisionPreviewContext.replaceChildren();
+    saveButton.disabled = false;
     return;
   }
   const revision = { ...parent, ...draft, parentRevisionId: parent.revisionId, replyToRef: draft.replyToRef };
@@ -457,8 +486,14 @@ function showRevisionPreviewContext(draft) {
   intro.textContent = `「${parent.title}」を親にした新しい枝です。保存しても元の版は残ります。`;
   const changes = window.DiaryStore.describeRevisionPair(parent, revision);
   const difference = document.createElement("p");
-  difference.textContent = changes.length ? `変わるところ：${changes.map((item) => item.label).join("・")}` : "本文の差分がないため、新しい枝は保存できません。";
-  revisionPreviewContext.replaceChildren(intro, difference);
+  difference.textContent = changes.length ? "親の版からの差分です。" : "変更がないため、新しい枝は保存できません。";
+  const rows = changes.map((item) => {
+    const row = document.createElement("p");
+    row.textContent = `${item.label}：旧「${item.existing}」／新「${item.incoming}」`;
+    return row;
+  });
+  saveButton.disabled = changes.length === 0;
+  revisionPreviewContext.replaceChildren(intro, difference, ...rows);
   revisionPreviewContext.hidden = false;
 }
 
@@ -467,6 +502,9 @@ function beginRevision(originId, revisionId) {
   const revision = page?.revisions.find((item) => item.revisionId === revisionId);
   if (!revision) return;
   editingRevision = { originId, parentRevisionId: revisionId };
+  revisionMode.hidden = false;
+  revisionModeMessage.textContent = `「${revision.title}」の版を書き直し中です。保存すると子の枝になり、元の版は残ります。`;
+  document.querySelector("#composer-heading").textContent = "この版を書き直す";
   titleInput.value = revision.title;
   bodyInput.value = revision.body;
   moodInput.value = revision.mood;
@@ -478,7 +516,7 @@ function beginRevision(originId, revisionId) {
   replyInput.value = replyTarget ?? "";
   updateCharacterCounts();
   invalidatePreview();
-  composerStatus.textContent = "表示中の版を親にして書き直します。保存前に差分と返信先を確認できます。";
+  composerStatus.textContent = "選んだ版を親にして書き直します。やめれば新しい追記へ戻れます。";
   entryForm.scrollIntoView({ behavior: "smooth", block: "start" });
   titleInput.focus();
 }
@@ -510,7 +548,10 @@ function saveDraft() {
         createdAt: draftForPreview.createdAt,
       }, makeUnusedLocalId, diary.entries, editingRevision.parentRevisionId)
       : window.DiaryStore.appendEntry(localGraph, draftForPreview, diary.entries);
-    if (!nextGraph) throw new Error("Could not append diary revision");
+    if (!nextGraph) {
+      composerStatus.textContent = editingRevision ? "親の版と同じ内容では、新しい枝を保存できません。変更してから確認してください。" : "この内容は保存できませんでした。";
+      return;
+    }
     commitLocalEntries(window.DiaryStore.entriesFromGraph(nextGraph, diary.entries), null, nextGraph);
   } catch (error) {
     console.error("Could not save local diary entry", error);
@@ -519,7 +560,7 @@ function saveDraft() {
   }
   clearPendingImport();
   entryForm.reset();
-  editingRevision = null;
+  leaveRevisionMode();
   updateCharacterCounts();
   draftForPreview = null;
   preview.hidden = true;
@@ -528,6 +569,26 @@ function saveDraft() {
   renderFilters();
   renderEntries();
   composerStatus.textContent = "この端末に保存しました。正本の日記は変更していません。";
+  titleInput.focus();
+}
+
+function leaveRevisionMode() {
+  editingRevision = null;
+  revisionMode.hidden = true;
+  revisionModeMessage.textContent = "";
+  document.querySelector("#composer-heading").textContent = "私の追記を書く";
+}
+
+function cancelRevisionMode() {
+  leaveRevisionMode();
+  entryForm.reset();
+  updateCharacterCounts();
+  invalidatePreview();
+  revisionPreviewContext.hidden = true;
+  revisionPreviewContext.replaceChildren();
+  saveButton.disabled = false;
+  populateReplyOptions();
+  composerStatus.textContent = "書き直しをやめて、新しい追記に戻りました。";
   titleInput.focus();
 }
 
@@ -802,9 +863,11 @@ editButton.addEventListener("click", () => {
   preview.hidden = true;
   revisionPreviewContext.hidden = true;
   draftForPreview = null;
+  saveButton.disabled = false;
   titleInput.focus();
 });
 saveButton.addEventListener("click", saveDraft);
+cancelRevision.addEventListener("click", cancelRevisionMode);
 function invalidatePreview() {
   if (!preview.hidden) {
     preview.hidden = true;

@@ -24,6 +24,10 @@
           <p class="local-only">この端末のみに保存</p>
         </div>
         <p class="composer-intro">ここで書いた一通は正本の日記には送られません。あとからこの端末でだけ読み返し、削除できます。</p>
+        <div id="revision-mode" class="revision-mode" hidden>
+          <p id="revision-mode-message"></p>
+          <button id="cancel-revision" class="button button-quiet" type="button">書き直しをやめて新しい追記に戻る</button>
+        </div>
         <form id="entry-form" class="entry-form" novalidate>
           <div id="form-errors" class="form-errors" hidden role="alert"></div>
           <div class="form-grid">
